@@ -8,6 +8,11 @@ pub struct TerminalGuard {
 }
 
 impl TerminalGuard {
+  /// Enter raw mode and alternate screen, installing a panic hook to restore terminal state.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if enabling raw mode or switching to alternate screen fails.
   pub fn init() -> anyhow::Result<Self> {
     terminal::enable_raw_mode()?;
     let mut stdout = stdout();

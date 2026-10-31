@@ -40,6 +40,7 @@ const KEYMAP: &[(KeyCode, KeyModifiers, Action)] = {
   ]
 };
 
+#[must_use]
 pub fn action_for_key(key: KeyEvent) -> Option<Action> {
   let mods = match key.code {
     KeyCode::Char(_) => key.modifiers - KeyModifiers::SHIFT,
