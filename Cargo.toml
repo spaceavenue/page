@@ -1,16 +1,44 @@
-[package]
-name = "page-rs"
+[workspace]
+members = [
+  ".",
+  "tests"
+]
+default-members = [
+  ".",
+  "tests"
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = { version = "1.0.104", default-features = false }
 crossterm = { version = "0.29.0", default-features = false, features = ["events"] }
-lexopt = { version = "0.3.2", default-features = false}
-memchr = { version = "2.8.3"}
+lexopt = { version = "0.3.2", default-features = false }
+memchr = { version = "2.8.3" }
 memmap2 = { version = "0.9.11", default-features = false }
 unicode-width = { version = "0.2.2", default-features = false, features = ["cjk"] }
+page-rs = { path = "." }
+
+[package]
+name = "page-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+
+[features]
+test-support = []
+
+[dependencies]
+anyhow.workspace = true
+crossterm.workspace = true
+lexopt.workspace = true
+memchr.workspace = true
+memmap2.workspace = true
+unicode-width.workspace = true
 
 [[bin]]
 name = "page"
