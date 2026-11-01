@@ -1,12 +1,6 @@
-pub mod action;
-pub mod ansi;
 pub mod buffer;
-pub mod cli;
-pub mod options;
+pub mod config;
 pub mod pager;
-pub mod reader;
 pub mod scroll;
-pub mod terminal;
 pub mod text;
 pub mod ui;
-pub mod viewport;

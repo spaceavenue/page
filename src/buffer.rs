@@ -9,7 +9,7 @@ use anyhow::Context;
 use memchr::memchr_iter;
 use memmap2::{Mmap, MmapOptions};
 
-use crate::cli::Input;
+use crate::config::cli::Input;
 
 /// Files below ~64KiB are faster to load using `read()` instead of `mmap()`-ing them.
 const MMAP_THRESHOLD: usize = 64 * 1024; // 64 KiB

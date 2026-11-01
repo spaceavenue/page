@@ -1,4 +1,4 @@
-use page_rs::viewport::Viewport;
+use page_rs::ui::viewport::Viewport;
 
 #[test]
 fn dimensions_and_body_height() {

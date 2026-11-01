@@ -1,20 +1,19 @@
-use std::io::{self, Write};
+mod mode;
+mod render;
+
+use std::io::{self};
 use std::time::Duration;
 
-use crossterm::cursor::MoveTo;
 use crossterm::event::Event;
-use crossterm::style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor};
-use crossterm::terminal::{Clear, ClearType};
-use crossterm::{event, queue, terminal};
+use crossterm::{event, terminal};
 
-use crate::action::{Action, action_for_key};
 use crate::buffer::Buffer;
-pub use crate::options::Options;
+use crate::config::action::{Action, action_for_key};
+use crate::config::options::Options;
+use crate::pager::mode::Mode;
 use crate::scroll::{self, Anchor};
-use crate::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use crate::text::{ParsedLine, WrapMode};
-use crate::ui::StatusContext;
-use crate::viewport::Viewport;
+use crate::ui::viewport::Viewport;
 
 const STREAM_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -40,7 +39,8 @@ pub struct Pager {
   viewport: Viewport,
   running: bool,
   dirty: bool,
-  showing_help: bool,
+  mode: Mode,
+  // showing_help: bool,
   left: usize,
   follow: bool,
   opts: Options,
@@ -64,7 +64,8 @@ impl Pager {
       viewport: Viewport::new(usize::from(width), usize::from(height)),
       running: true,
       dirty: true,
-      showing_help: false,
+      mode: Mode::Normal,
+      // showing_help: false,
       left: 0,
       follow,
       opts: options,
@@ -115,19 +116,21 @@ impl Pager {
 
   fn handle_event(&mut self, event: Event) {
     match event {
-      Event::Key(key_event) if self.showing_help => {
-        if action_for_key(key_event) == Some(Action::Quit) {
-          self.running = false;
-        } else {
-          self.showing_help = false;
+      Event::Key(key_event) => match self.mode {
+        Mode::Normal => {
+          if let Some(action) = action_for_key(key_event) {
+            self.dispatch(action);
+          }
         }
-        self.dirty = true;
-      }
-      Event::Key(key_event) => {
-        if let Some(action) = action_for_key(key_event) {
-          self.dispatch(action);
+        Mode::Help => {
+          if action_for_key(key_event) == Some(Action::Quit) {
+            self.running = false;
+          } else {
+            self.mode = Mode::Normal;
+          }
+          self.dirty = true;
         }
-      }
+      },
       Event::Resize(width, height) => {
         self.viewport = Viewport::new(usize::from(width), usize::from(height));
         // A row or column offset is meaningless after the size changes.
@@ -163,7 +166,7 @@ impl Pager {
       ScrollLeft => self.scroll_horizontal(false),
       ScrollRight => self.scroll_horizontal(true),
       ScrollHome => self.left = 0,
-      Help => self.showing_help = true,
+      Help => self.mode = Mode::Help,
       Quit => self.running = false,
     }
     self.dirty = true;
@@ -284,167 +287,167 @@ impl Pager {
     }
   }
 
-  fn render(&mut self, out: &mut impl Write) -> anyhow::Result<()> {
-    queue!(out, BeginSynchronizedUpdate)?;
+  // fn render(&mut self, out: &mut impl Write) -> anyhow::Result<()> {
+  //   queue!(out, BeginSynchronizedUpdate)?;
 
-    if self.showing_help {
-      self.render_help(out)?;
-      queue!(out, EndSynchronizedUpdate)?;
-      out.flush()?;
-      return Ok(());
-    }
+  //   if self.showing_help {
+  //     self.render_help(out)?;
+  //     queue!(out, EndSynchronizedUpdate)?;
+  //     out.flush()?;
+  //     return Ok(());
+  //   }
 
-    self
-      .buffer
-      .index_till_line(self.viewport.bottom_line(self.top.line));
+  //   self
+  //     .buffer
+  //     .index_till_line(self.viewport.bottom_line(self.top.line));
 
-    let body = self.viewport.body_height();
-    let content_width = self.content_width();
-    let gutter = self.gutter_width();
-    let mut line = self.top.line;
-    let mut skip = self.top.row;
-    let mut screen_row = 0usize;
+  //   let body = self.viewport.body_height();
+  //   let content_width = self.content_width();
+  //   let gutter = self.gutter_width();
+  //   let mut line = self.top.line;
+  //   let mut skip = self.top.row;
+  //   let mut screen_row = 0usize;
 
-    while screen_row < body {
-      let Some(raw) = self.buffer.line_bytes(line) else {
-        break;
-      };
+  //   while screen_row < body {
+  //     let Some(raw) = self.buffer.line_bytes(line) else {
+  //       break;
+  //     };
 
-      self.parsed.parse(raw, self.opts.ansi, self.opts.tab_width);
+  //     self.parsed.parse(raw, self.opts.ansi, self.opts.tab_width);
 
-      match self.opts.wrap {
-        WrapMode::None => {
-          let range = self.parsed.column_range(self.left, content_width);
-          let cursor_row = u16::try_from(screen_row)?;
-          queue!(out, MoveTo(0, cursor_row), Clear(ClearType::CurrentLine))?;
-          self.render_gutter(out, line, true, gutter)?;
-          self.parsed.render_range(out, range)?;
-          screen_row += 1;
-        }
-        WrapMode::Soft | WrapMode::Hard => {
-          let word_wrap = self.opts.wrap == WrapMode::Soft;
-          let start_row = if skip == 0 {
-            0
-          } else {
-            skip.min(self.parsed.count_rows(content_width, word_wrap) - 1)
-          };
+  //     match self.opts.wrap {
+  //       WrapMode::None => {
+  //         let range = self.parsed.column_range(self.left, content_width);
+  //         let cursor_row = u16::try_from(screen_row)?;
+  //         queue!(out, MoveTo(0, cursor_row), Clear(ClearType::CurrentLine))?;
+  //         self.render_gutter(out, line, true, gutter)?;
+  //         self.parsed.render_range(out, range)?;
+  //         screen_row += 1;
+  //       }
+  //       WrapMode::Soft | WrapMode::Hard => {
+  //         let word_wrap = self.opts.wrap == WrapMode::Soft;
+  //         let start_row = if skip == 0 {
+  //           0
+  //         } else {
+  //           skip.min(self.parsed.count_rows(content_width, word_wrap) - 1)
+  //         };
 
-          let rows = self
-            .parsed
-            .rows(content_width, word_wrap)
-            .skip(start_row)
-            .take(body - screen_row);
+  //         let rows = self
+  //           .parsed
+  //           .rows(content_width, word_wrap)
+  //           .skip(start_row)
+  //           .take(body - screen_row);
 
-          for (offset, range) in rows.enumerate() {
-            let cursor_row = u16::try_from(screen_row)?;
-            queue!(out, MoveTo(0, cursor_row), Clear(ClearType::CurrentLine))?;
-            let first_row = start_row == 0 && offset == 0;
-            self.render_gutter(out, line, first_row, gutter)?;
-            self.parsed.render_range(out, range)?;
-            screen_row += 1;
-          }
-        }
-      }
-      line += 1;
-      skip = 0;
-    }
+  //         for (offset, range) in rows.enumerate() {
+  //           let cursor_row = u16::try_from(screen_row)?;
+  //           queue!(out, MoveTo(0, cursor_row), Clear(ClearType::CurrentLine))?;
+  //           let first_row = start_row == 0 && offset == 0;
+  //           self.render_gutter(out, line, first_row, gutter)?;
+  //           self.parsed.render_range(out, range)?;
+  //           screen_row += 1;
+  //         }
+  //       }
+  //     }
+  //     line += 1;
+  //     skip = 0;
+  //   }
 
-    for row in screen_row..body {
-      let cursor_row = u16::try_from(row)?;
-      queue!(
-        out,
-        MoveTo(0, cursor_row),
-        Clear(ClearType::CurrentLine),
-        SetForegroundColor(self.opts.ui.theme.filler_fg),
-        Print("~"),
-        ResetColor
-      )?;
-    }
+  //   for row in screen_row..body {
+  //     let cursor_row = u16::try_from(row)?;
+  //     queue!(
+  //       out,
+  //       MoveTo(0, cursor_row),
+  //       Clear(ClearType::CurrentLine),
+  //       SetForegroundColor(self.opts.ui.theme.filler_fg),
+  //       Print("~"),
+  //       ResetColor
+  //     )?;
+  //   }
 
-    self.render_status(out)?;
-    queue!(out, EndSynchronizedUpdate)?;
-    out.flush()?;
-    Ok(())
-  }
+  //   self.render_status(out)?;
+  //   queue!(out, EndSynchronizedUpdate)?;
+  //   out.flush()?;
+  //   Ok(())
+  // }
 
-  fn render_gutter(
-    &self,
-    out: &mut impl Write,
-    line: usize,
-    first_row: bool,
-    gutter: usize,
-  ) -> anyhow::Result<()> {
-    if gutter == 0 {
-      return Ok(());
-    }
+  // fn render_gutter(
+  //   &self,
+  //   out: &mut impl Write,
+  //   line: usize,
+  //   first_row: bool,
+  //   gutter: usize,
+  // ) -> anyhow::Result<()> {
+  //   if gutter == 0 {
+  //     return Ok(());
+  //   }
 
-    if first_row {
-      let number_width = gutter - 1;
-      queue!(
-        out,
-        SetForegroundColor(self.opts.ui.theme.gutter_fg),
-        Print(format!("{:>number_width$} ", line + 1)),
-        ResetColor
-      )?;
-    } else {
-      queue!(out, Print(" ".repeat(gutter)))?;
-    }
+  //   if first_row {
+  //     let number_width = gutter - 1;
+  //     queue!(
+  //       out,
+  //       SetForegroundColor(self.opts.ui.theme.gutter_fg),
+  //       Print(format!("{:>number_width$} ", line + 1)),
+  //       ResetColor
+  //     )?;
+  //   } else {
+  //     queue!(out, Print(" ".repeat(gutter)))?;
+  //   }
 
-    Ok(())
-  }
+  //   Ok(())
+  // }
 
-  fn render_help(&self, out: &mut impl Write) -> anyhow::Result<()> {
-    queue!(out, MoveTo(0, 0), Clear(ClearType::All))?;
+  // fn render_help(&self, out: &mut impl Write) -> anyhow::Result<()> {
+  //   queue!(out, MoveTo(0, 0), Clear(ClearType::All))?;
 
-    for (row, line) in HELP.lines().take(self.viewport.body_height()).enumerate() {
-      let cursor_row = u16::try_from(row)?;
-      let text = line.chars().take(self.viewport.width()).collect::<String>();
-      queue!(out, MoveTo(0, cursor_row), Print(text))?;
-    }
+  //   for (row, line) in HELP.lines().take(self.viewport.body_height()).enumerate() {
+  //     let cursor_row = u16::try_from(row)?;
+  //     let text = line.chars().take(self.viewport.width()).collect::<String>();
+  //     queue!(out, MoveTo(0, cursor_row), Print(text))?;
+  //   }
 
-    if self.viewport.height() > 0 {
-      let footer_row = u16::try_from(self.viewport.last_row())?;
-      let footer = "Press any key to close."
-        .chars()
-        .take(self.viewport.width())
-        .collect::<String>();
-      queue!(out, MoveTo(0, footer_row), Print(footer))?;
-    }
+  //   if self.viewport.height() > 0 {
+  //     let footer_row = u16::try_from(self.viewport.last_row())?;
+  //     let footer = "Press any key to close."
+  //       .chars()
+  //       .take(self.viewport.width())
+  //       .collect::<String>();
+  //     queue!(out, MoveTo(0, footer_row), Print(footer))?;
+  //   }
 
-    Ok(())
-  }
+  //   Ok(())
+  // }
 
-  fn render_status(&mut self, out: &mut impl Write) -> anyhow::Result<()> {
-    use std::fmt::Write as _;
+  // fn render_status(&mut self, out: &mut impl Write) -> anyhow::Result<()> {
+  //   use std::fmt::Write as _;
 
-    let filename = self.buffer.filename();
-    let lines = self.buffer.line_count();
-    let reading = self.buffer.is_streaming();
-    let percent = self.viewport.percent(self.top.line, lines);
+  //   let filename = self.buffer.filename();
+  //   let lines = self.buffer.line_count();
+  //   let reading = self.buffer.is_streaming();
+  //   let percent = self.viewport.percent(self.top.line, lines);
 
-    let context = StatusContext::new(filename, lines, percent, reading);
-    self.status_buf.clear();
-    write!(
-      &mut self.status_buf,
-      "{}",
-      self.opts.ui.status.display(&context)
-    )?;
+  //   let context = StatusContext::new(filename, lines, percent, reading);
+  //   self.status_buf.clear();
+  //   write!(
+  //     &mut self.status_buf,
+  //     "{}",
+  //     self.opts.ui.status.display(&context)
+  //   )?;
 
-    let status_row = u16::try_from(self.viewport.last_row())?;
+  //   let status_row = u16::try_from(self.viewport.last_row())?;
 
-    queue!(
-      out,
-      MoveTo(0, status_row),
-      Clear(ClearType::CurrentLine),
-      SetForegroundColor(self.opts.ui.theme.status_fg),
-      SetBackgroundColor(self.opts.ui.theme.status_bg),
-      Print(format_args!(
-        "{status:<width$}",
-        status = self.status_buf,
-        width = self.viewport.width()
-      )),
-      ResetColor
-    )?;
-    Ok(())
-  }
+  //   queue!(
+  //     out,
+  //     MoveTo(0, status_row),
+  //     Clear(ClearType::CurrentLine),
+  //     SetForegroundColor(self.opts.ui.theme.status_fg),
+  //     SetBackgroundColor(self.opts.ui.theme.status_bg),
+  //     Print(format_args!(
+  //       "{status:<width$}",
+  //       status = self.status_buf,
+  //       width = self.viewport.width()
+  //     )),
+  //     ResetColor
+  //   )?;
+  //   Ok(())
+  // }
 }

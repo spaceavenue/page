@@ -6,7 +6,7 @@ use anyhow::{Context, bail};
 use lexopt::Arg::{Long, Short, Value};
 use lexopt::{Parser, ValueExt};
 
-use crate::options::Options;
+use crate::config::options::Options;
 use crate::text::WrapMode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

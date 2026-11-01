@@ -1,23 +1,10 @@
 use std::io::{Result, Stdout, stdout};
 
 use crossterm::terminal::{
-  EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+  EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+  enable_raw_mode,
 };
-use crossterm::{Command, cursor, execute};
-
-pub struct BeginSynchronizedUpdate;
-impl Command for BeginSynchronizedUpdate {
-  fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-    write!(f, "\x1b[?2026h")
-  }
-}
-
-pub struct EndSynchronizedUpdate;
-impl Command for EndSynchronizedUpdate {
-  fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-    write!(f, "\x1b[?2026l")
-  }
-}
+use crossterm::{cursor, execute};
 
 pub struct TerminalGuard;
 

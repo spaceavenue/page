@@ -1,8 +1,11 @@
+pub mod terminal;
+pub mod viewport;
+
 use std::fmt::{self, Display, Formatter, Write as _};
 
 use crossterm::style::Color;
 
-use crate::reader::Reader;
+use crate::text::reader::Reader;
 
 const TOKEN_FILENAME: &str = "filename";
 const TOKEN_LINES: &str = "lines";

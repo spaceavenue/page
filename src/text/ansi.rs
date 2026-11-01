@@ -1,6 +1,6 @@
 use crossterm::style::{Attribute, Attributes, Color};
 
-use crate::reader::Reader;
+use crate::text::reader::Reader;
 
 const ESC: char = '\x1b';
 const BEL: char = '\x07';

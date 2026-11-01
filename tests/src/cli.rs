@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use lexopt::Parser;
-use page_rs::cli::{Cli, Input};
+use page_rs::config::cli::{Cli, Input};
 use page_rs::text::WrapMode;
 
 fn parse_args(

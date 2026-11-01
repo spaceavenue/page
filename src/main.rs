@@ -1,7 +1,7 @@
 use page_rs::buffer::Buffer;
-use page_rs::cli::Cli;
+use page_rs::config::cli::Cli;
 use page_rs::pager::Pager;
-use page_rs::terminal::TerminalGuard;
+use page_rs::ui::terminal::TerminalGuard;
 
 fn main() -> anyhow::Result<()> {
   let Some(args) = Cli::parse()? else {
