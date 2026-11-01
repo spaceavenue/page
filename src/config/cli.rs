@@ -2,17 +2,60 @@ use std::io::IsTerminal;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
-use anyhow::{Context, bail};
-use lexopt::Arg::{Long, Short, Value};
-use lexopt::{Parser, ValueExt};
+use anyhow::bail;
+use clap::{Parser, ValueEnum, value_parser};
 
 use crate::config::options::Options;
 use crate::text::WrapMode;
+use crate::ui::Ui;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
   Stdin,
   Path(PathBuf),
+}
+
+/// CLI choices for `--wrap` option.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+enum CliWrap {
+  #[default]
+  Soft,
+  Hard,
+  #[value(name = "off", alias = "none")]
+  None,
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Parser)]
+#[command(version, about, author)]
+struct Args {
+  /// Follow stdin as new data arrives.
+  #[arg(short = 'f', long = "follow")]
+  follow: bool,
+
+  /// Set line wrapping mode. Conflicts with `--no-wrap`.
+  #[arg(short = 'w', long = "wrap", value_enum, conflicts_with = "no_wrap")]
+  wrap: Option<CliWrap>,
+
+  /// Alias for --wrap off. Conflicts with `--wrap`.
+  #[arg(short = 'W', long = "no-wrap")]
+  no_wrap: bool,
+
+  /// Set tab stop width in columns (1..=256).
+  #[arg(short = 't', long = "tab-width", default_value = "8", value_parser = value_parser!(u16).range(1..=256))]
+  tab_width: u16,
+
+  /// Turn ANSI SGR escape sequence parsing off.
+  #[arg(short = 'R', long = "no-ansi", default_value = "false")]
+  no_ansi: bool,
+
+  /// Show line numbers in gutter.
+  #[arg(short = 'N', long = "line-numbers", default_value = "false")]
+  line_numbers: bool,
+
+  /// File to display, or '-' for stdin.
+  #[arg(value_name = "FILE")]
+  file: Option<PathBuf>,
 }
 
 pub struct Cli {
@@ -22,90 +65,150 @@ pub struct Cli {
   pub options: Options,
 }
 
+impl TryFrom<Args> for Cli {
+  type Error = anyhow::Error;
+
+  fn try_from(args: Args) -> Result<Self, Self::Error> {
+    let input = match args.file {
+      Some(p) if p.as_os_str() == "-" => Input::Stdin,
+      Some(p) => Input::Path(p),
+      None if !std::io::stdin().is_terminal() => bail!("missing filename or piped input."),
+      None => Input::Stdin,
+    };
+
+    let wrap = if args.no_wrap {
+      WrapMode::None
+    } else {
+      match args.wrap {
+        Some(CliWrap::Soft) | None => WrapMode::Soft,
+        Some(CliWrap::Hard) => WrapMode::Hard,
+        Some(CliWrap::None) => WrapMode::None,
+      }
+    };
+
+    let tab_width = NonZeroUsize::new(usize::from(args.tab_width)).unwrap_or(NonZeroUsize::MIN);
+    let options = Options::new(
+      args.follow,
+      wrap,
+      !args.no_ansi,
+      tab_width,
+      args.line_numbers,
+      Ui::default(),
+    );
+
+    Ok(Self { input, options })
+  }
+}
+
 impl Cli {
   /// Parse command-line arguments from `std::env::args_os`.
   ///
   /// # Errors
   ///
   /// Returns an error if any arguments fail to parse or are invalid.
-  pub fn parse() -> anyhow::Result<Option<Self>> {
-    Self::parse_args(Parser::from_env())
-  }
-
-  /// Parse command-line options using the given [`Parser`].
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if any arguments fail to parse or are invalid.
-  pub fn parse_args(mut parser: Parser) -> anyhow::Result<Option<Self>> {
-    let mut input = None;
-    let mut o = Options::default();
-
-    while let Some(arg) = parser.next()? {
-      match arg {
-        Short('f') | Long("follow") => o.initial_follow = true,
-        Short('R') | Long("no-ansi") => o.ansi = false,
-        Short('w') | Long("wrap") => o.wrap = get_wrap(&parser.value()?.string()?)?,
-        Short('W') | Long("no-wrap") => o.wrap = WrapMode::None,
-        Short('t') | Long("tab-width") => o.tab_width = get_tab_width(&parser.value()?.string()?)?,
-        Short('N') | Long("line-numbers") => o.line_numbers = true,
-
-        Value(val) if val == "-" => input = Some(Input::Stdin),
-        Value(_) if input.is_some() => bail!("unexpected extra argument"),
-        Value(val) => input = Some(Input::Path(PathBuf::from(val))),
-
-        Short('h') | Long("help") => {
-          get_help();
-          return Ok(None);
-        }
-        _ => return Err(arg.unexpected().into()),
-      }
-    }
-
-    let input = get_input(input)?;
-
-    Ok(Some(Self { input, options: o }))
+  pub fn parse() -> anyhow::Result<Self> {
+    Self::try_from(Args::parse())
   }
 }
 
-fn get_wrap(val: &str) -> anyhow::Result<WrapMode> {
-  match val {
-    "hard" => Ok(WrapMode::Hard),
-    "soft" => Ok(WrapMode::Soft),
-    "off" => Ok(WrapMode::None),
-    _ => bail!("invalid value for wrap"),
-  }
-}
+#[cfg(test)]
+mod tests {
+  use std::iter;
 
-fn get_tab_width(val: &str) -> anyhow::Result<NonZeroUsize> {
-  let parsed = val
-    .parse::<NonZeroUsize>()
-    .context(format!("invalid tab width: {val}"))?;
-  if parsed.get() > 256 {
-    bail!("tab width must be between 1 and 256")
-  }
-  Ok(parsed)
-}
+  use super::*;
 
-fn get_input(input: Option<Input>) -> anyhow::Result<Input> {
-  match input {
-    Some(input) => Ok(input),
-    None if std::io::stdin().is_terminal() => bail!("missing filename or piped input"),
-    None => Ok(Input::Stdin),
+  fn parse_args<I, T>(args: I) -> Cli
+  where
+    I: IntoIterator<Item = T>,
+    T: Into<String> + Clone,
+  {
+    try_parse_args(args).expect("expected Cli")
   }
-}
 
-fn get_help() {
-  println!(
-    r"Usage: page-rs [OPTIONS] [- | FILE]
- Options:
-    --follow, -f        follow stdin
-    --wrap, -w MODE     soft (default), hard, or off
-    --no-wrap, -W       alias for --wrap off
-    --no-ansi, -R       do not interpret SGR escape sequences
-    --tab-width N       columns between tab stops (default: 8, range: 1..=256)
-    --line-numbers, -N  show line numbers
-    --help, -h          print this message
-"
-  );
+  fn try_parse_args<I, T>(args: I) -> anyhow::Result<Cli>
+  where
+    I: IntoIterator<Item = T>,
+    T: Into<String> + Clone,
+  {
+    let args = iter::once(String::from("page")).chain(args.into_iter().map(Into::into));
+    let args = Args::try_parse_from(args)?;
+    Cli::try_from(args)
+  }
+
+  #[test]
+  fn defaults() {
+    let cli = parse_args(vec!["file.txt"]);
+    assert_eq!(cli.input, Input::Path(PathBuf::from("file.txt")));
+    assert_eq!(cli.options.wrap, WrapMode::Soft);
+    assert!(cli.options.ansi);
+    assert_eq!(cli.options.tab_width.get(), 8);
+    assert!(!cli.options.line_numbers);
+    assert!(!cli.options.initial_follow);
+  }
+
+  #[test]
+  fn flags_parsed() {
+    let cli = parse_args([
+      "--follow",
+      "--wrap",
+      "hard",
+      "--no-ansi",
+      "--tab-width",
+      "4",
+      "--line-numbers",
+      "-",
+    ]);
+    assert_eq!(cli.input, Input::Stdin);
+    assert!(cli.options.initial_follow);
+    assert_eq!(cli.options.wrap, WrapMode::Hard);
+    assert!(!cli.options.ansi);
+    assert_eq!(cli.options.tab_width.get(), 4);
+    assert!(cli.options.line_numbers);
+  }
+
+  #[test]
+  fn wrap_option_parsed() {
+    let cli = parse_args(["--wrap", "hard", "file"]);
+    assert_eq!(cli.options.wrap, WrapMode::Hard);
+
+    let cli = parse_args(["-w", "soft", "file"]);
+    assert_eq!(cli.options.wrap, WrapMode::Soft);
+  }
+
+  #[test]
+  fn wrap_off_option_parsed() {
+    let cli = parse_args(["-w", "off", "file"]);
+    assert_eq!(cli.options.wrap, WrapMode::None);
+
+    let cli = parse_args(["-W", "file"]);
+    assert_eq!(cli.options.wrap, WrapMode::None);
+
+    let cli = parse_args(["--wrap", "off", "file"]);
+    assert_eq!(cli.options.wrap, WrapMode::None);
+
+    let cli = parse_args(["--no-wrap", "file"]);
+    assert_eq!(cli.options.wrap, WrapMode::None);
+  }
+
+  #[test]
+  fn no_wrap_conficts_wrap() {
+    assert!(try_parse_args(["--wrap", "soft", "--no-wrap"]).is_err());
+    assert!(try_parse_args(["-w", "off", "-W"]).is_err());
+  }
+
+  #[test]
+  fn tab_width_equals_form() {
+    let cli = parse_args(["--tab-width=2", "file"]);
+    assert_eq!(cli.options.tab_width.get(), 2);
+  }
+
+  #[test]
+  fn zero_tab_width_rejected() {
+    assert!(try_parse_args(["--tab-width", "0", "file"]).is_err());
+  }
+
+  #[test]
+  fn oversized_tab_width_rejected() {
+    assert!(try_parse_args(["--tab-width", "257", "file"]).is_err());
+  }
 }

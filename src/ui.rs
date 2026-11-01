@@ -127,3 +127,6 @@ impl StatusBar {
     }
   }
 }
+
+#[cfg(test)]
+mod tests;

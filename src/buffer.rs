@@ -46,18 +46,6 @@ pub struct Buffer {
 }
 
 impl Buffer {
-  /// Create an in-memory buffer from bytes.
-  #[must_use]
-  pub fn from_bytes(contents: impl Into<Vec<u8>>, filename: impl Into<String>) -> Self {
-    Self {
-      source: BufferSource::Heap(contents.into()),
-      line_offsets: Vec::new(),
-      scanned: 0,
-      filename: filename.into(),
-      stdin_rx: None,
-    }
-  }
-
   /// Load a buffer from either a file path or stdin.
   ///
   /// # Errors
@@ -255,5 +243,41 @@ impl Buffer {
   pub fn line_bytes(&self, line: usize) -> Option<&[u8]> {
     let (start, end) = self.line_range(line)?;
     self.source.get(start..end)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn buffer_from(contents: &[u8]) -> Buffer {
+    let contents = contents.to_vec();
+    Buffer {
+      source: BufferSource::Heap(contents.into()),
+      line_offsets: Vec::new(),
+      scanned: 0,
+      filename: "test".into(),
+      stdin_rx: None,
+    }
+  }
+
+  #[test]
+  fn indexing_through_line_makes_it_readable() {
+    let mut buf = buffer_from(b"hello\nworld\n");
+    buf.index_till_line(1);
+    assert_eq!(buf.line_bytes(0), Some(&b"hello"[..]));
+    assert_eq!(buf.line_bytes(1), Some(&b"world"[..]));
+    assert_eq!(buf.line_bytes(2), None);
+    assert_eq!(buf.line_count(), 2);
+  }
+
+  #[test]
+  fn unterminated_last_line_readable() {
+    let mut buf = buffer_from(b"a\nb\nc");
+    buf.index_till_line(2);
+    assert_eq!(buf.line_bytes(0), Some(&b"a"[..]));
+    assert_eq!(buf.line_bytes(1), Some(&b"b"[..]));
+    assert_eq!(buf.line_bytes(2), Some(&b"c"[..]));
+    assert_eq!(buf.line_count(), 3);
   }
 }

@@ -1,5 +1,6 @@
 use crossterm::style::Color;
-use page_rs::ui::{StatusBar, StatusContext, Theme, Ui};
+
+use super::*;
 
 fn context(reading: bool) -> StatusContext<'static> {
   StatusContext {
