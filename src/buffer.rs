@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::{self, Read};
+use std::ops::Deref;
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread;
@@ -20,12 +21,12 @@ const STDIN_MAX_CHUNK: usize = 256 * 1024;
 /// How much to stream ahead of current line before blocking the pipe.
 const STDIN_CHANNEL_CAPACITY: usize = 32;
 
-pub enum BufferSource {
+enum BufferSource {
   Mmap(Mmap),
   Heap(Vec<u8>),
 }
 
-impl std::ops::Deref for BufferSource {
+impl Deref for BufferSource {
   type Target = [u8];
 
   fn deref(&self) -> &Self::Target {

@@ -1,11 +1,25 @@
-use std::io::{self, Stdout, Write, stdout};
+use std::io::{Result, Stdout, stdout};
 
-use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::{cursor, execute};
+use crossterm::terminal::{
+  EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use crossterm::{Command, cursor, execute};
 
-pub struct TerminalGuard {
-  _private: (),
+pub struct BeginSynchronizedUpdate;
+impl Command for BeginSynchronizedUpdate {
+  fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+    write!(f, "\x1b[?2026h")
+  }
 }
+
+pub struct EndSynchronizedUpdate;
+impl Command for EndSynchronizedUpdate {
+  fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+    write!(f, "\x1b[?2026l")
+  }
+}
+
+pub struct TerminalGuard;
 
 impl TerminalGuard {
   /// Enter raw mode and alternate screen, installing a panic hook to restore terminal state.
@@ -14,25 +28,28 @@ impl TerminalGuard {
   ///
   /// Returns an error if enabling raw mode or switching to alternate screen fails.
   pub fn init() -> anyhow::Result<Self> {
-    terminal::enable_raw_mode()?;
-    let mut stdout = stdout();
-    execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
+    enable_raw_mode()?;
 
     // panic hook to restore terminal on panic
     let default_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-      let _ = Self::restore_terminal(&mut io::stdout());
+      let _ = Self::restore_terminal(&mut std::io::stdout());
       default_panic(info);
     }));
 
-    Ok(Self { _private: () })
+    let mut stdout = stdout();
+    execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
+    Ok(Self)
   }
 
-  fn restore_terminal(stdout: &mut Stdout) -> io::Result<()> {
-    execute!(stdout, LeaveAlternateScreen, cursor::Show)?;
-    terminal::disable_raw_mode()?;
-    stdout.flush()?;
-    Ok(())
+  fn restore_terminal(stdout: &mut Stdout) -> Result<()> {
+    execute!(
+      stdout,
+      EndSynchronizedUpdate,
+      LeaveAlternateScreen,
+      cursor::Show
+    )?;
+    disable_raw_mode()
   }
 }
 

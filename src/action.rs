@@ -11,16 +11,21 @@ pub enum Action {
   HalfPageDown,
   GotoTop,
   GotoBottom,
+  ScrollLeft,
+  ScrollRight,
+  ScrollHome,
+  Help,
   Quit,
 }
 
 const KEYMAP: &[(KeyCode, KeyModifiers, Action)] = {
-  use KeyCode::{Char, Down, End, Enter, Esc, Home, PageDown, PageUp, Up};
+  use KeyCode::{Char, Down, End, Enter, Esc, Home, Left, PageDown, PageUp, Right, Up};
   use KeyModifiers as Mod;
 
   &[
     (Char('q'), Mod::NONE, Action::Quit),
     (Esc, Mod::NONE, Action::Quit),
+    (Char('c'), Mod::CONTROL, Action::Quit),
     (Up, Mod::NONE, Action::LineUp),
     (Char('k'), Mod::NONE, Action::LineUp),
     (Down, Mod::NONE, Action::LineDown),
@@ -37,12 +42,19 @@ const KEYMAP: &[(KeyCode, KeyModifiers, Action)] = {
     (Home, Mod::NONE, Action::GotoTop),
     (Char('G'), Mod::NONE, Action::GotoBottom),
     (End, Mod::NONE, Action::GotoBottom),
+    (Left, Mod::NONE, Action::ScrollLeft),
+    (Right, Mod::NONE, Action::ScrollRight),
+    (Char('0'), Mod::NONE, Action::ScrollHome),
+    (Char('h'), Mod::NONE, Action::Help),
+    (Char('?'), Mod::NONE, Action::Help),
   ]
 };
 
 #[must_use]
 pub fn action_for_key(key: KeyEvent) -> Option<Action> {
   let mods = match key.code {
+    // a caveat here is crossterm will send, for eg, Shift+g as Char(G), KeyModifiers::SHIFT. we can
+    // just match on capital letters, so remove the Shift modifier.
     KeyCode::Char(_) => key.modifiers - KeyModifiers::SHIFT,
     _ => key.modifiers,
   };

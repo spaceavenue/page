@@ -1,11 +1,12 @@
 use std::io::Write;
+use std::num::NonZeroUsize;
 use std::ops::Range;
 
 use crossterm::queue;
 use crossterm::style::{
   Attribute, Print, SetAttribute, SetAttributes, SetBackgroundColor, SetForegroundColor,
 };
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::ansi::{self, Style};
 use crate::reader::Reader;
@@ -15,12 +16,38 @@ const DEL: char = '\x7f';
 /// Caret notation shows control byte `b` as `^` followed by `b + 0x40`.
 const CARET_OFFSET: u8 = 0x40;
 
+/// How lines wider than the terminal are displayed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WrapMode {
+  /// Break at word boundaries.
+  #[default]
+  Soft,
+  /// Break at the column limit.
+  Hard,
+  /// Do not wrap.
+  None,
+}
+
 /// A styled run in a parsed line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Run {
+pub struct Run {
   /// Byte offset into [`ParsedLine::text`] where this run starts.
   start: usize,
   style: Style,
+}
+
+impl Run {
+  /// Start offset of this run in the line's plain text. Test-only.
+  #[must_use]
+  pub const fn start(&self) -> usize {
+    self.start
+  }
+
+  /// Visual style of this run. Test-only.
+  #[must_use]
+  pub const fn style(&self) -> Style {
+    self.style
+  }
 }
 
 /// A single logical line of parsed input.
@@ -34,7 +61,7 @@ pub struct ParsedLine {
 
 impl ParsedLine {
   /// Parse `raw` into printable text and expand tabs to `tab_width`.
-  pub fn parse(&mut self, raw: &[u8], ansi_enabled: bool, tab_width: usize) {
+  pub fn parse(&mut self, raw: &[u8], ansi_enabled: bool, tab_width: NonZeroUsize) {
     self.text.clear();
     self.runs.clear();
 
@@ -59,7 +86,7 @@ impl ParsedLine {
         }
         '\t' => {
           reader.bump();
-          let spaces = tab_width - (column % tab_width);
+          let spaces = tab_width.get() - (column % tab_width.get());
           self.text.extend(std::iter::repeat_n(' ', spaces));
           column += spaces;
         }
@@ -114,17 +141,10 @@ impl ParsedLine {
     &self.text
   }
 
-  /// Get the visual style active at byte offset `byte`.
+  /// Style runs.
   #[must_use]
-  pub fn style_at(&self, byte: usize) -> Style {
-    let first = self
-      .runs
-      .partition_point(|run| run.start <= byte)
-      .saturating_sub(1);
-    self
-      .runs
-      .get(first)
-      .map_or_else(Style::default, |run| run.style)
+  pub fn runs(&self) -> &[Run] {
+    &self.runs
   }
 
   /// Lazily lay out the display rows of this line as byte ranges into [`ParsedLine::text`].
@@ -136,6 +156,61 @@ impl ParsedLine {
   #[must_use]
   pub fn count_rows(&self, width: usize, word_wrap: bool) -> usize {
     self.rows(width, word_wrap).count()
+  }
+
+  /// Width of this line in terminal columns.
+  #[must_use]
+  pub fn display_width(&self) -> usize {
+    UnicodeWidthStr::width(self.text.as_str())
+  }
+
+  /// Byte range covering the display columns `[left, left + width)`.
+  ///
+  /// A wide character that straddles the left edge is skipped rather than split. If `left` is past
+  /// the end of the line the returned range is empty.
+  #[must_use]
+  pub fn column_range(&self, left: usize, width: usize) -> Range<usize> {
+    if width == 0 || self.text.is_empty() {
+      let end = self.text.len();
+      return end..end;
+    }
+
+    let limit = left.saturating_add(width);
+    let mut column = 0usize;
+    let mut start = None;
+    let mut end = 0usize;
+
+    for (index, ch) in self.text.char_indices() {
+      let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+      let next = column + char_width;
+
+      if char_width == 0 {
+        if start.is_some() {
+          end = index + ch.len_utf8();
+        }
+        column = next;
+        continue;
+      }
+
+      if next <= left {
+        column = next;
+        continue;
+      }
+      if column < left {
+        // A wide character straddles the left edge.
+        column = next;
+        continue;
+      }
+      if column >= limit || next > limit {
+        break;
+      }
+
+      start.get_or_insert(index);
+      end = index + ch.len_utf8();
+      column = next;
+    }
+
+    start.map_or(self.text.len()..self.text.len(), |start| start..end)
   }
 
   /// Render one display row, including the SGR commands needed to apply its

@@ -1,9 +1,13 @@
 use std::io::IsTerminal;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use anyhow::{Context, bail};
 use lexopt::Arg::{Long, Short, Value};
 use lexopt::{Parser, ValueExt};
+
+use crate::options::Options;
+use crate::text::WrapMode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
@@ -14,14 +18,8 @@ pub enum Input {
 pub struct Cli {
   /// File or stdin.
   pub input: Input,
-  /// Follow mode (default = false).
-  pub follow: bool,
-  /// When wrapping, slice words across lines (default = false).
-  pub hard_wrap: bool,
-  /// Control SGR parsing (default = true).
-  pub ansi: bool,
-  /// Width of tab characters (default = 8).
-  pub tab_width: usize,
+  /// Config options for the pager.
+  pub options: Options,
 }
 
 impl Cli {
@@ -41,17 +39,16 @@ impl Cli {
   /// Returns an error if any arguments fail to parse or are invalid.
   pub fn parse_args(mut parser: Parser) -> anyhow::Result<Option<Self>> {
     let mut input = None;
-    let mut follow = false;
-    let mut hard_wrap = false;
-    let mut ansi = true;
-    let mut tab_width = 8usize;
+    let mut o = Options::default();
 
     while let Some(arg) = parser.next()? {
       match arg {
-        Short('f') | Long("follow") => follow = true,
-        Short('R') | Long("no-ansi") => ansi = false,
-        Short('w') | Long("wrap") => hard_wrap = get_wrap(&parser.value()?.string()?)?,
-        Short('t') | Long("tab-width") => tab_width = get_tab_width(&parser.value()?.string()?)?,
+        Short('f') | Long("follow") => o.initial_follow = true,
+        Short('R') | Long("no-ansi") => o.ansi = false,
+        Short('w') | Long("wrap") => o.wrap = get_wrap(&parser.value()?.string()?)?,
+        Short('W') | Long("no-wrap") => o.wrap = WrapMode::None,
+        Short('t') | Long("tab-width") => o.tab_width = get_tab_width(&parser.value()?.string()?)?,
+        Short('N') | Long("line-numbers") => o.line_numbers = true,
 
         Value(val) if val == "-" => input = Some(Input::Stdin),
         Value(_) if input.is_some() => bail!("unexpected extra argument"),
@@ -67,29 +64,24 @@ impl Cli {
 
     let input = get_input(input)?;
 
-    Ok(Some(Self {
-      input,
-      follow,
-      hard_wrap,
-      ansi,
-      tab_width,
-    }))
+    Ok(Some(Self { input, options: o }))
   }
 }
 
-fn get_wrap(val: &str) -> anyhow::Result<bool> {
+fn get_wrap(val: &str) -> anyhow::Result<WrapMode> {
   match val {
-    "hard" => Ok(true),
-    "soft" => Ok(false),
+    "hard" => Ok(WrapMode::Hard),
+    "soft" => Ok(WrapMode::Soft),
+    "off" => Ok(WrapMode::None),
     _ => bail!("invalid value for wrap"),
   }
 }
 
-fn get_tab_width(val: &str) -> anyhow::Result<usize> {
+fn get_tab_width(val: &str) -> anyhow::Result<NonZeroUsize> {
   let parsed = val
-    .parse::<usize>()
+    .parse::<NonZeroUsize>()
     .context(format!("invalid tab width: {val}"))?;
-  if !(1..=256).contains(&parsed) {
+  if parsed.get() > 256 {
     bail!("tab width must be between 1 and 256")
   }
   Ok(parsed)
@@ -105,12 +97,15 @@ fn get_input(input: Option<Input>) -> anyhow::Result<Input> {
 
 fn get_help() {
   println!(
-    "Usage: page-rs [OPTIONS] [- | FILE]\n\n\
-     Options:\n\
-     \x20\x20--follow, -f     follow mode\n\
-     \x20\x20--wrap, -w       wrapping mode: soft (default) or hard\n\
-     \x20\x20--no-ansi, -R    do not interpret SGR escape sequences\n\
-     \x20\x20--tab-width N    columns between tab stops (default: 8)\n\
-     \x20\x20--help, -h       print this message"
+    r"Usage: page-rs [OPTIONS] [- | FILE]
+ Options:
+    --follow, -f        follow stdin
+    --wrap, -w MODE     soft (default), hard, or off
+    --no-wrap, -W       alias for --wrap off
+    --no-ansi, -R       do not interpret SGR escape sequences
+    --tab-width N       columns between tab stops (default: 8, range: 1..=256)
+    --line-numbers, -N  show line numbers
+    --help, -h          print this message
+"
   );
 }
