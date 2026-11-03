@@ -1,7 +1,6 @@
 mod mode;
 mod render;
 
-use std::io::Write;
 use std::time::Duration;
 
 use crossterm::event::{Event, KeyEvent};

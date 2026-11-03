@@ -220,3 +220,6 @@ fn caret(ch: char) -> char {
   }
   u8::try_from(ch).map_or('\u{fffd}', |byte| char::from(byte + CARET_OFFSET))
 }
+
+#[cfg(test)]
+mod tests;

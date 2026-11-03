@@ -57,3 +57,79 @@ pub fn rewind(
 
   anchor
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// Line heights used by tests: 0 -> 1, 1 -> 3, 2 -> 1, 3 -> 2.
+  fn heights(line: usize) -> usize {
+    match line {
+      1 => 3,
+      3 => 2,
+      _ => 1,
+    }
+  }
+
+  const fn at(line: usize, row: usize) -> Anchor {
+    Anchor { line, row }
+  }
+
+  #[test]
+  fn advance_within_line() {
+    assert_eq!(advance(at(1, 0), 1, heights), at(1, 1));
+    assert_eq!(advance(at(1, 1), 2, heights), at(2, 0));
+  }
+
+  #[test]
+  fn advance_across_lines() {
+    assert_eq!(advance(at(0, 0), 1, heights), at(1, 0));
+    assert_eq!(advance(at(0, 0), 2, heights), at(1, 1));
+    assert_eq!(advance(at(1, 2), 1, heights), at(2, 0));
+  }
+
+  #[test]
+  fn advance_by_zero_noop() {
+    assert_eq!(advance(at(2, 1), 0, heights), at(2, 1));
+  }
+
+  #[test]
+  fn rewind_within_line() {
+    assert_eq!(rewind(at(1, 2), 1, heights), at(1, 1));
+    assert_eq!(rewind(at(1, 2), 2, heights), at(1, 0));
+  }
+
+  #[test]
+  fn rewind_across_lines() {
+    assert_eq!(rewind(at(1, 0), 1, heights), at(0, 0));
+    assert_eq!(rewind(at(2, 0), 1, heights), at(1, 2));
+    assert_eq!(rewind(at(3, 1), 2, heights), at(2, 0));
+  }
+
+  #[test]
+  fn rewind_clamps_start() {
+    assert_eq!(rewind(at(0, 0), 10, heights), at(0, 0));
+    assert_eq!(rewind(at(1, 1), 10, heights), at(0, 0));
+  }
+
+  #[test]
+  fn rewind_by_zero_noop() {
+    assert_eq!(rewind(at(2, 1), 0, heights), at(2, 1));
+  }
+
+  #[test]
+  fn advance_then_rewind_round_trips() {
+    for start in [at(0, 0), at(1, 0), at(1, 2), at(3, 1)] {
+      for rows in 0..10 {
+        let moved = advance(start, rows, heights);
+        assert_eq!(rewind(moved, rows, heights), start, "{start:?} + {rows}");
+      }
+    }
+  }
+
+  #[test]
+  fn advance_out_of_bounds_row_does_not_panic() {
+    // line 0 has height 1, but anchor has row 5. Advancing 1 row moves to line 1, row 1.
+    assert_eq!(advance(at(0, 5), 1, heights), at(1, 1));
+  }
+}
