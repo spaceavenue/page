@@ -3,7 +3,7 @@ use std::io::Write;
 use crossterm::cursor::MoveTo;
 use crossterm::queue;
 use crossterm::style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor};
-use crossterm::terminal::{BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate};
+use crossterm::terminal::{Clear, ClearType};
 
 use super::mode::Mode;
 use super::{HELP, Pager};
@@ -20,10 +20,8 @@ impl Pager {
   /// Returns an error if terminal output fails or a coordinate cannot be
   /// represented as a `u16`.
   pub fn render(&mut self, out: &mut impl Write) -> anyhow::Result<()> {
-    queue!(out, BeginSynchronizedUpdate)?;
-    if matches!(self.mode, Mode::Help) {
+    if matches!(&self.mode, Mode::Help) {
       self.render_help(out)?;
-      queue!(out, EndSynchronizedUpdate)?;
       out.flush()?;
       return Ok(());
     }
@@ -78,6 +76,7 @@ impl Pager {
           }
         }
       }
+
       line += 1;
       skip = 0;
     }
@@ -95,7 +94,6 @@ impl Pager {
     }
 
     self.render_status(out)?;
-    queue!(out, EndSynchronizedUpdate)?;
     out.flush()?;
     Ok(())
   }

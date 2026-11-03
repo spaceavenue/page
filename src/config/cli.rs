@@ -7,7 +7,6 @@ use clap::{Parser, ValueEnum, value_parser};
 
 use crate::config::options::Options;
 use crate::text::WrapMode;
-use crate::ui::Ui;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
@@ -46,7 +45,7 @@ struct Args {
   tab_width: u16,
 
   /// Turn ANSI SGR escape sequence parsing off.
-  #[arg(short = 'R', long = "no-ansi", default_value = "false")]
+  #[arg(short = 'R', long = "no-ansi")]
   no_ansi: bool,
 
   /// Show line numbers in gutter.
@@ -69,32 +68,30 @@ impl TryFrom<Args> for Cli {
   type Error = anyhow::Error;
 
   fn try_from(args: Args) -> Result<Self, Self::Error> {
+    let mut options = Options::default();
+
     let input = match args.file {
       Some(p) if p.as_os_str() == "-" => Input::Stdin,
       Some(p) => Input::Path(p),
-      None if !std::io::stdin().is_terminal() => bail!("missing filename or piped input."),
+      None if std::io::stdin().is_terminal() => bail!("missing filename or piped input."),
       None => Input::Stdin,
     };
 
-    let wrap = if args.no_wrap {
-      WrapMode::None
-    } else {
-      match args.wrap {
-        Some(CliWrap::Soft) | None => WrapMode::Soft,
-        Some(CliWrap::Hard) => WrapMode::Hard,
-        Some(CliWrap::None) => WrapMode::None,
+    if args.no_wrap {
+      options.wrap = WrapMode::None;
+    } else if let Some(wrap) = args.wrap {
+      options.wrap = match wrap {
+        CliWrap::Soft => WrapMode::Soft,
+        CliWrap::Hard => WrapMode::Hard,
+        CliWrap::None => WrapMode::None,
       }
-    };
+    }
 
-    let tab_width = NonZeroUsize::new(usize::from(args.tab_width)).unwrap_or(NonZeroUsize::MIN);
-    let options = Options::new(
-      args.follow,
-      wrap,
-      !args.no_ansi,
-      tab_width,
-      args.line_numbers,
-      Ui::default(),
-    );
+    options.tab_width = NonZeroUsize::new(usize::from(args.tab_width)).unwrap_or(NonZeroUsize::MIN);
+
+    options.initial_follow = args.follow;
+    options.ansi = !args.no_ansi;
+    options.line_numbers = args.line_numbers;
 
     Ok(Self { input, options })
   }

@@ -1,4 +1,4 @@
-# page-rs
+# page
 
 A terminal pager written in Rust.
 
@@ -28,8 +28,8 @@ Designed for near-instant startup and zero binary bloat.
 
 ```bash
 # Clone the repository
-git clone https://github.com/spaceavenue/page-rs.git
-cd page-rs
+git clone https://github.com/spaceavenue/page.git
+cd page
 
 # Build an optimized release binary
 cargo build --release
@@ -124,15 +124,15 @@ cargo test
 
 ## Architecture Overview
 
-- **`buffer`**: Owns data sources (memory-mapped files $\ge$ 64 KiB, a heap buffer for small files, and a streaming background reader for `stdin`). Manages lazy newline index vectors.
-- **`reader`**: Zero-copy cursor over `&str`.
-- **`ansi`**: ECMA-48 SGR parameter parser emitting color and attribute changes.
-- **`text`**: Handles tab expansions, Unicode display widths, and lazy row iteration. Preserves ANSI styling across wrapped lines.
+- **`buffer`**: Owns data sources (memory-mapped files $\ge$ 64 KiB, heap buffer for small files, streaming background reader for `stdin`). Manages lazy newline index vectors.
+- **`text`**: Applies tab expansion, Unicode display widths, lazy row iteration, wrapping and styling, to create a `ParsedLine`.
+  - `text::reader`: Zero-copy cursor over `&str`.
+  - `text::ansi`: ECMA-48 SGR parameter parser emitting color and attribute changes.
+  - `text::wrap`: Line wrapping implementation.
 - **`scroll`**: Decoupled scroll state (`Anchor { line, row }`). Handles multi-row visual scrolling and boundary clamping.
-- **`viewport`**: Terminal dimensions and derived layout values: body height, status row, content width, gutter width, and the visible line range.
-- **`ui`**: Colors and the status-bar template.
+- **`ui`**: Terminal alternate screen setup, viewport/layout math, theme colors and the status bar template.
+- **`config`**: CLI parsing, pager options and action keymap.
 - **`pager`**: Main terminal UI event loop driven by `crossterm`.
-**`action`**: Static keymap for actions.
 
 ---
 

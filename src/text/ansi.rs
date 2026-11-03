@@ -166,12 +166,7 @@ fn color_from_params<'a>(groups: &mut impl Iterator<Item = &'a str>) -> Option<C
       let r = groups.next().and_then(parse_u8);
       let g = groups.next().and_then(parse_u8);
       let b = groups.next().and_then(parse_u8);
-
-      Some(Color::Rgb {
-        r: r?,
-        g: g?,
-        b: b?,
-      })
+      Some(Color::from((r?, g?, b?)))
     }
     _ => None,
   }
@@ -193,12 +188,7 @@ fn color_from_subparams<'a>(sub: &mut impl Iterator<Item = &'a str>) -> Option<C
       let (r, g, b) = values
         .next()
         .map_or((first, second, third), |fourth| (second, third, fourth));
-
-      Some(Color::Rgb {
-        r: r?,
-        g: g?,
-        b: b?,
-      })
+      Some(Color::from((r?, g?, b?)))
     }
     _ => None,
   }

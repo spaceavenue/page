@@ -1,8 +1,7 @@
 use std::io::{Result, Stdout, stdout};
 
 use crossterm::terminal::{
-  EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-  enable_raw_mode,
+  EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use crossterm::{cursor, execute};
 
@@ -30,12 +29,7 @@ impl TerminalGuard {
   }
 
   fn restore_terminal(stdout: &mut Stdout) -> Result<()> {
-    execute!(
-      stdout,
-      EndSynchronizedUpdate,
-      LeaveAlternateScreen,
-      cursor::Show
-    )?;
+    execute!(stdout, LeaveAlternateScreen, cursor::Show)?;
     disable_raw_mode()
   }
 }
