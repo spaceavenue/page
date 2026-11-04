@@ -75,30 +75,30 @@ impl<'a> LineBuilder<'a> {
         '\t' => {
           reader.bump();
           self.push_tab(tab_width);
-        }
+        },
         // Lines never normally contain a newline, but be defensive.
         '\n' => {
           reader.bump();
-        }
+        },
         // Printable ASCII is one column per byte, so copy whole runs at once.
         ' '..='~' => {
           let run = reader.read_while(|c| matches!(c, ' '..='~'));
           self.push_run(run);
-        }
+        },
         _ if ch.is_ascii_control() => {
           reader.bump();
           self.push_caret(ch);
-        }
+        },
         // C1 controls are valid UTF-8 but some terminals still interpret them
         // as escape introducers.
         _ if ch.is_control() => {
           reader.bump();
           self.push_replacement();
-        }
+        },
         _ => {
           let grapheme = reader.read_grapheme();
           self.push_grapheme(grapheme, self.base_style);
-        }
+        },
       }
     }
   }
@@ -231,8 +231,8 @@ impl ParsedLine {
 
   /// Byte range and leading padding covering the display columns `[left, left + width)`.
   ///
-  /// A wide glyph that straddles the left edge is skipped rather than split; the
-  /// skipped columns are reported in [`ColumnWindow::pad`].
+  /// A wide glyph that straddles the left edge is skipped rather than split; the skipped columns
+  /// are reported in [`ColumnWindow::pad`].
   #[must_use]
   pub fn column_window(&self, left: usize, width: usize) -> ColumnWindow {
     if width == 0 || self.text.is_empty() {

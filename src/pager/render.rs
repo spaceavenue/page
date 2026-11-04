@@ -57,7 +57,7 @@ impl Pager {
           }
           self.parsed_buf.render_range(out, window.range)?;
           screen_row += 1;
-        }
+        },
         WrapMode::Soft | WrapMode::Hard => {
           let word_wrap = self.opts.wrap == WrapMode::Soft;
           let start_row = if skip == 0 {
@@ -80,7 +80,7 @@ impl Pager {
             self.parsed_buf.render_range(out, range)?;
             screen_row += 1;
           }
-        }
+        },
       }
 
       line += 1;

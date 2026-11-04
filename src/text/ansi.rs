@@ -32,16 +32,16 @@ pub fn escape(reader: &mut Reader, enabled: bool, style: Style) -> Style {
     ']' => {
       skip_string(reader, true);
       style
-    }
+    },
     'P' | '_' | '^' | 'X' => {
       skip_string(reader, false);
       style
-    }
+    },
     // Character-set designations and similar. one more byte follows.
     '(' | ')' | '*' | '+' | '-' | '.' | '/' => {
       reader.bump();
       style
-    }
+    },
     _ => style,
   }
 }
@@ -52,11 +52,11 @@ fn csi(reader: &mut Reader, enabled: bool, style: Style) -> Style {
     Some('m') if enabled => {
       reader.bump();
       apply_sgr(style, params)
-    }
+    },
     Some('@'..='~') => {
       reader.bump();
       style
-    }
+    },
     _ => style,
   }
 }
@@ -102,7 +102,7 @@ pub fn apply_sgr(mut style: Style, params: &str) -> Style {
             style.bg = Some(color);
           }
         }
-      }
+      },
       _ => apply_simple(&mut style, code),
     }
   }
@@ -130,20 +130,20 @@ fn apply_simple(style: &mut Style, code: u16) {
     22 => {
       style.attrs.unset(Attribute::Bold);
       style.attrs.unset(Attribute::Dim);
-    }
+    },
     23 => style.attrs.unset(Attribute::Italic),
     24 => style.attrs.unset(Attribute::Underlined),
     25 => {
       style.attrs.unset(Attribute::SlowBlink);
       style.attrs.unset(Attribute::RapidBlink);
-    }
+    },
     27 => style.attrs.unset(Attribute::Reverse),
     28 => style.attrs.unset(Attribute::Hidden),
     29 => style.attrs.unset(Attribute::CrossedOut),
     54 => {
       style.attrs.unset(Attribute::Framed);
       style.attrs.unset(Attribute::Encircled);
-    }
+    },
     55 => style.attrs.unset(Attribute::OverLined),
 
     // colors
@@ -153,7 +153,7 @@ fn apply_simple(style: &mut Style, code: u16) {
     49 => style.bg = None,
     90..=97 => style.fg = Some(bright_color(code - 90)),
     100..=107 => style.bg = Some(bright_color(code - 100)),
-    _ => {}
+    _ => {},
   }
 }
 
@@ -167,7 +167,7 @@ fn color_from_params<'a>(groups: &mut impl Iterator<Item = &'a str>) -> Option<C
       let g = groups.next().and_then(parse_u8);
       let b = groups.next().and_then(parse_u8);
       Some(Color::from((r?, g?, b?)))
-    }
+    },
     _ => None,
   }
 }
@@ -189,7 +189,7 @@ fn color_from_subparams<'a>(sub: &mut impl Iterator<Item = &'a str>) -> Option<C
         .next()
         .map_or((first, second, third), |fourth| (second, third, fourth));
       Some(Color::from((r?, g?, b?)))
-    }
+    },
     _ => None,
   }
 }

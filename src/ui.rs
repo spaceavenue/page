@@ -2,7 +2,7 @@ pub mod status;
 pub mod terminal;
 pub mod viewport;
 
-use std::fmt::{self, Write as _};
+use std::fmt;
 use std::io::Write;
 
 use crossterm::cursor::MoveTo;
@@ -84,7 +84,7 @@ impl Ui {
   ) -> anyhow::Result<()> {
     buf.clear();
     match content {
-      BarContent::Status(ctx) => write!(buf, "{}", self.status.display(ctx))?,
+      BarContent::Status(ctx) => self.status.render(ctx, buf)?,
       BarContent::Message(msg) => buf.push_str(msg),
     }
     queue!(

@@ -34,11 +34,6 @@ impl<'a> Reader<'a> {
     head
   }
 
-  /// Read until the delimeter is found.
-  pub(crate) fn read_until(&mut self, delimiter: char) -> &'a str {
-    self.read_while(|ch| ch != delimiter)
-  }
-
   /// Read the next grapheme cluster.
   pub(crate) fn read_grapheme(&mut self) -> &'a str {
     let len = self.text.graphemes(true).next().map_or(0, str::len);

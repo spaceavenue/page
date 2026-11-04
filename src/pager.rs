@@ -127,7 +127,7 @@ impl Pager {
           Mode::Normal => self.handle_normal_key(key_event),
           Mode::Help => self.handle_help_key(key_event),
         }
-      }
+      },
       Event::Resize(width, height) => {
         self.viewport = Viewport::new(usize::from(width), usize::from(height));
         // A row or column offset is meaningless after the size changes.
@@ -135,8 +135,8 @@ impl Pager {
         self.left = 0;
         self.set_top(self.top);
         self.dirty();
-      }
-      _ => {}
+      },
+      _ => {},
     }
   }
 
@@ -173,7 +173,7 @@ impl Pager {
       GotoTop => {
         self.following = false;
         self.set_top(Anchor::default());
-      }
+      },
       GotoBottom => self.jump_to_bottom(),
       ScrollLeft => self.scroll_horizontal(false),
       ScrollRight => self.scroll_horizontal(true),

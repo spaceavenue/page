@@ -55,7 +55,7 @@ impl Buffer {
     match input {
       Input::Path(path) => {
         Self::from_file(path).with_context(|| format!("failed to read file: {}", path.display()))
-      }
+      },
       Input::Stdin => Self::from_stdin(),
     }
   }
@@ -65,7 +65,7 @@ impl Buffer {
   /// # Errors
   ///
   /// Returns an error if opening or reading the file fails.
-  pub fn from_file(path: &Path) -> anyhow::Result<Self> {
+  fn from_file(path: &Path) -> anyhow::Result<Self> {
     let mut file = File::open(path)?;
     let size = usize::try_from(file.metadata()?.len())
       .context("file is too large to fit in memory address space.")?;
@@ -101,7 +101,7 @@ impl Buffer {
   /// # Errors
   ///
   /// Returns an error if spawning the stdin reader thread fails.
-  pub fn from_stdin() -> anyhow::Result<Self> {
+  fn from_stdin() -> anyhow::Result<Self> {
     let (tx, rx) = mpsc::sync_channel(STDIN_CHANNEL_CAPACITY);
     Self::spawn_stdin_reader(tx)?;
 
@@ -130,12 +130,12 @@ impl Buffer {
                 break;
               }
               chunk_size = (chunk_size * 2).min(STDIN_MAX_CHUNK);
-            }
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            },
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {},
             Err(e) => {
               let _ = tx.send(Err(e));
               break;
-            }
+            },
           }
         }
       })
@@ -162,22 +162,23 @@ impl Buffer {
             buf.extend_from_slice(&chunk);
           }
           received = true;
-        }
+        },
         Ok(Err(e)) => {
           self.stdin_rx = None;
           return Err(e).context("error reading from stdin");
-        }
+        },
         Err(mpsc::TryRecvError::Empty) => break,
         Err(mpsc::TryRecvError::Disconnected) => {
           self.stdin_rx = None;
           break;
-        }
+        },
       }
     }
 
     Ok(received)
   }
 
+  /// Check if buffer is streaming data from stdin.
   #[must_use]
   pub const fn is_streaming(&self) -> bool {
     self.stdin_rx.is_some()
@@ -192,6 +193,7 @@ impl Buffer {
     !self.is_streaming() && self.scanned >= self.source.len()
   }
 
+  /// Index till at least the `target` line.
   pub fn index_till_line(&mut self, target_line: usize) {
     if self.line_offsets.len() > target_line {
       return;
@@ -210,11 +212,13 @@ impl Buffer {
     self.scanned = bytes.len();
   }
 
+  /// Get the filename of the opened path, or `[stdin]` if streaming from stdin.
   #[must_use]
   pub fn filename(&self) -> &str {
     &self.filename
   }
 
+  /// Get total number of lines indedex so far.
   #[must_use]
   pub fn line_count(&self) -> usize {
     let tail_start = self.line_offsets.last().map_or(0, |&newline| newline + 1);
@@ -222,6 +226,7 @@ impl Buffer {
     self.line_offsets.len() + usize::from(unterminated_tail)
   }
 
+  /// Get the start and end byte offsets for `line`.
   #[must_use]
   pub fn line_range(&self, line: usize) -> Option<(usize, usize)> {
     let start = match line.checked_sub(1) {
@@ -239,6 +244,7 @@ impl Buffer {
     Some((start, end))
   }
 
+  /// Get the bytes for `line`.
   #[must_use]
   pub fn line_bytes(&self, line: usize) -> Option<&[u8]> {
     let (start, end) = self.line_range(line)?;
