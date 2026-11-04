@@ -59,16 +59,15 @@ impl Pager {
           screen_row += 1;
         },
         WrapMode::Soft | WrapMode::Hard => {
-          let word_wrap = self.opts.wrap == WrapMode::Soft;
           let start_row = if skip == 0 {
             0
           } else {
-            skip.min(self.parsed_buf.count_rows(content_width, word_wrap) - 1)
+            skip.min(self.parsed_buf.count_rows(content_width, self.opts.wrap) - 1)
           };
 
           let rows = self
             .parsed_buf
-            .rows(content_width, word_wrap)
+            .rows(content_width, self.opts.wrap)
             .skip(start_row)
             .take(body - screen_row);
 
@@ -150,12 +149,12 @@ impl Pager {
   }
 
   fn render_status(&mut self, out: &mut impl io::Write) -> anyhow::Result<()> {
-    let filename = self.buffer.filename();
+    let title = &self.title;
     let lines = self.buffer.line_count();
     let reading = self.buffer.is_streaming();
     let percent = self.viewport.percent(self.top.line, lines);
 
-    let context = StatusContext::new(filename, lines, percent, reading);
+    let context = StatusContext::new(title, lines, percent, reading);
     let status_row = u16::try_from(self.viewport.last_row())?;
 
     self.opts.ui.render_bar(

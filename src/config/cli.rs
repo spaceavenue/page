@@ -14,6 +14,15 @@ pub enum Input {
   Path(PathBuf),
 }
 
+impl std::fmt::Display for Input {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::Stdin => write!(f, "[stdin]"),
+      Self::Path(path) => write!(f, "{}", path.display()),
+    }
+  }
+}
+
 /// CLI choices for `--wrap` option.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 enum CliWrap {

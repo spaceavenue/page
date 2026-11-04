@@ -1,9 +1,10 @@
 use std::fs::File;
 use std::io::{self, Read};
-use std::ops::Deref;
+use std::ops::{Deref, Range};
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread;
+use std::time::Duration;
 
 use anyhow::Context;
 use memchr::memchr_iter;
@@ -14,9 +15,8 @@ use crate::config::cli::Input;
 /// Files below ~64KiB are faster to load using `read()` instead of `mmap()`-ing them.
 const MMAP_THRESHOLD: usize = 64 * 1024; // 64 KiB
 
-/// Read stdin in growing chunks to minimize syscall overhead.
-const STDIN_MIN_CHUNK: usize = 8 * 1024;
-const STDIN_MAX_CHUNK: usize = 256 * 1024;
+/// Read stdin in chunks of 64KiB.
+const STDIN_CHUNK_SIZE: usize = 64 * 1024;
 
 /// How much to stream ahead of current line before blocking the pipe.
 const STDIN_CHANNEL_CAPACITY: usize = 32;
@@ -24,6 +24,52 @@ const STDIN_CHANNEL_CAPACITY: usize = 32;
 enum BufferSource {
   Mmap(Mmap),
   Heap(Vec<u8>),
+  Stream(StreamBuffer),
+}
+
+struct StdinStream {
+  data_rx: Receiver<io::Result<Vec<u8>>>,
+  vec_tx: SyncSender<Vec<u8>>,
+}
+
+struct StreamBuffer {
+  data: Vec<u8>,
+  stream: Option<StdinStream>,
+}
+
+impl StreamBuffer {
+  const fn is_streaming(&self) -> bool {
+    self.stream.is_some()
+  }
+
+  fn read_chunk(&mut self) -> anyhow::Result<bool> {
+    let Some(stream) = self.stream.as_mut() else {
+      return Ok(false);
+    };
+
+    let mut received = false;
+    loop {
+      match stream.data_rx.try_recv() {
+        Ok(Ok(mut chunk)) => {
+          self.data.extend_from_slice(&chunk);
+          received = true;
+          chunk.clear();
+          let _ = stream.vec_tx.try_send(chunk);
+        },
+        Ok(Err(e)) => {
+          self.stream = None;
+          return Err(e).context("error reading from stdin");
+        },
+        Err(mpsc::TryRecvError::Empty) => break,
+        Err(mpsc::TryRecvError::Disconnected) => {
+          self.stream = None;
+          break;
+        },
+      }
+    }
+
+    Ok(received)
+  }
 }
 
 impl Deref for BufferSource {
@@ -33,6 +79,7 @@ impl Deref for BufferSource {
     match self {
       Self::Mmap(mmap) => mmap,
       Self::Heap(heap) => heap,
+      Self::Stream(stream) => &stream.data,
     }
   }
 }
@@ -41,8 +88,6 @@ pub struct Buffer {
   source: BufferSource,
   line_offsets: Vec<usize>,
   scanned: usize,
-  filename: String,
-  stdin_rx: Option<Receiver<io::Result<Vec<u8>>>>,
 }
 
 impl Buffer {
@@ -75,24 +120,17 @@ impl Buffer {
       file.read_to_end(&mut buf)?;
       BufferSource::Heap(buf)
     } else {
+      // SAFETY: if a file is truncated while open, we will receive a SIGBUS.
       let mmap = unsafe { MmapOptions::new().len(size).map(&file)? };
       // hint the kernel to perform bulk readahead and sequential TLB prep
       let _ = mmap.advise(memmap2::Advice::Sequential);
       BufferSource::Mmap(mmap)
     };
 
-    let filename = path
-      .file_name()
-      .and_then(|f| f.to_str())
-      .unwrap_or("file")
-      .to_string();
-
     Ok(Self {
       source,
       line_offsets: Vec::new(),
       scanned: 0,
-      filename,
-      stdin_rx: None,
     })
   }
 
@@ -102,38 +140,55 @@ impl Buffer {
   ///
   /// Returns an error if spawning the stdin reader thread fails.
   fn from_stdin() -> anyhow::Result<Self> {
-    let (tx, rx) = mpsc::sync_channel(STDIN_CHANNEL_CAPACITY);
-    Self::spawn_stdin_reader(tx)?;
+    let (data_tx, data_rx) = mpsc::sync_channel(STDIN_CHANNEL_CAPACITY);
+    let (vec_tx, vec_rx) = mpsc::sync_channel(STDIN_CHANNEL_CAPACITY);
+    Self::spawn_stdin_reader(data_tx, vec_rx)?;
+
+    let mut data = Vec::with_capacity(STDIN_CHUNK_SIZE * 4);
+    let mut active = true;
+
+    match data_rx.recv_timeout(Duration::from_millis(10)) {
+      Ok(Ok(mut chunk)) => {
+        data.extend_from_slice(&chunk);
+        chunk.clear();
+        let _ = vec_tx.try_send(chunk);
+      },
+      Ok(Err(e)) => return Err(e).context("error reading from stdin"),
+      Err(mpsc::RecvTimeoutError::Disconnected) => active = false,
+      Err(mpsc::RecvTimeoutError::Timeout) => {},
+    }
+
+    let stream = active.then_some(StdinStream { data_rx, vec_tx });
 
     Ok(Self {
-      source: BufferSource::Heap(Vec::with_capacity(STDIN_MIN_CHUNK * 4)),
+      source: BufferSource::Stream(StreamBuffer { data, stream }),
       line_offsets: Vec::new(),
       scanned: 0,
-      filename: "[stdin]".to_string(),
-      stdin_rx: Some(rx),
     })
   }
 
-  fn spawn_stdin_reader(tx: SyncSender<io::Result<Vec<u8>>>) -> anyhow::Result<()> {
+  fn spawn_stdin_reader(
+    data_tx: SyncSender<io::Result<Vec<u8>>>,
+    vec_rx: Receiver<Vec<u8>>,
+  ) -> anyhow::Result<()> {
     thread::Builder::new()
       .name("stdin_reader".into())
       .spawn(move || {
         let mut stdin = io::stdin().lock();
-        let mut chunk_size = STDIN_MIN_CHUNK;
         loop {
-          let mut chunk = vec![0u8; chunk_size];
+          let mut chunk = vec_rx.try_recv().unwrap_or_default();
+          chunk.resize(STDIN_CHUNK_SIZE, 0);
           match stdin.read(&mut chunk) {
             Ok(0) => break, // EOF
             Ok(n) => {
               chunk.truncate(n);
-              if tx.send(Ok(chunk)).is_err() {
+              if data_tx.send(Ok(chunk)).is_err() {
                 break;
               }
-              chunk_size = (chunk_size * 2).min(STDIN_MAX_CHUNK);
             },
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {},
+            Err(e) if matches!(e.kind(), io::ErrorKind::Interrupted) => {},
             Err(e) => {
-              let _ = tx.send(Err(e));
+              let _ = data_tx.send(Err(e));
               break;
             },
           }
@@ -150,38 +205,16 @@ impl Buffer {
   ///
   /// Returns an error if an I/O error occurred while reading from stdin.
   pub fn read_from_stdin(&mut self) -> anyhow::Result<bool> {
-    let Some(rx) = self.stdin_rx.as_ref() else {
+    let BufferSource::Stream(stream) = &mut self.source else {
       return Ok(false);
     };
-
-    let mut received = false;
-    loop {
-      match rx.try_recv() {
-        Ok(Ok(chunk)) => {
-          if let BufferSource::Heap(buf) = &mut self.source {
-            buf.extend_from_slice(&chunk);
-          }
-          received = true;
-        },
-        Ok(Err(e)) => {
-          self.stdin_rx = None;
-          return Err(e).context("error reading from stdin");
-        },
-        Err(mpsc::TryRecvError::Empty) => break,
-        Err(mpsc::TryRecvError::Disconnected) => {
-          self.stdin_rx = None;
-          break;
-        },
-      }
-    }
-
-    Ok(received)
+    stream.read_chunk()
   }
 
   /// Check if buffer is streaming data from stdin.
   #[must_use]
   pub const fn is_streaming(&self) -> bool {
-    self.stdin_rx.is_some()
+    matches!(&self.source, BufferSource::Stream(stream) if stream.is_streaming())
   }
 
   /// Whether every byte currently available has been scanned for newlines.
@@ -212,12 +245,6 @@ impl Buffer {
     self.scanned = bytes.len();
   }
 
-  /// Get the filename of the opened path, or `[stdin]` if streaming from stdin.
-  #[must_use]
-  pub fn filename(&self) -> &str {
-    &self.filename
-  }
-
   /// Get total number of lines indedex so far.
   #[must_use]
   pub fn line_count(&self) -> usize {
@@ -228,7 +255,7 @@ impl Buffer {
 
   /// Get the start and end byte offsets for `line`.
   #[must_use]
-  pub fn line_range(&self, line: usize) -> Option<(usize, usize)> {
+  pub fn line_range(&self, line: usize) -> Option<Range<usize>> {
     let start = match line.checked_sub(1) {
       Some(prev) => self.line_offsets.get(prev)? + 1,
       None => 0,
@@ -241,14 +268,14 @@ impl Buffer {
       None => return None,
     };
 
-    Some((start, end))
+    Some(start..end)
   }
 
   /// Get the bytes for `line`.
   #[must_use]
   pub fn line_bytes(&self, line: usize) -> Option<&[u8]> {
-    let (start, end) = self.line_range(line)?;
-    self.source.get(start..end)
+    let line_range = self.line_range(line)?;
+    self.source.get(line_range)
   }
 }
 
@@ -262,8 +289,6 @@ mod tests {
       source: BufferSource::Heap(contents),
       line_offsets: Vec::new(),
       scanned: 0,
-      filename: "test".into(),
-      stdin_rx: None,
     }
   }
 
@@ -285,5 +310,40 @@ mod tests {
     assert_eq!(buf.line_bytes(1), Some(&b"b"[..]));
     assert_eq!(buf.line_bytes(2), Some(&b"c"[..]));
     assert_eq!(buf.line_count(), 3);
+  }
+
+  #[test]
+  #[allow(clippy::unwrap_used)]
+  fn stream_source_indexing_and_reading() {
+    let (data_tx, data_rx) = mpsc::sync_channel(2);
+    let (vec_tx, vec_rx) = mpsc::sync_channel(2);
+    let mut buf = Buffer {
+      source: BufferSource::Stream(StreamBuffer {
+        data: Vec::new(),
+        stream: Some(StdinStream { data_rx, vec_tx }),
+      }),
+      line_offsets: Vec::new(),
+      scanned: 0,
+    };
+
+    assert!(buf.is_streaming());
+    assert!(!buf.is_fully_indexed());
+
+    data_tx.send(Ok(b"line 1\nline 2\n".to_vec())).unwrap();
+    assert!(buf.read_from_stdin().unwrap());
+    buf.index_till_line(1);
+    assert_eq!(buf.line_bytes(0), Some(&b"line 1"[..]));
+    assert_eq!(buf.line_bytes(1), Some(&b"line 2"[..]));
+
+    // Recycled vector should be received back in vec_rx
+    let recycled = vec_rx.try_recv().unwrap();
+    assert_eq!(recycled.len(), 0);
+
+    drop(data_tx);
+    // EOF disconnect
+    assert!(!buf.read_from_stdin().unwrap());
+    assert!(!buf.is_streaming());
+    assert!(buf.is_fully_indexed());
+    assert_eq!(buf.line_count(), 2);
   }
 }

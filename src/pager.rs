@@ -34,6 +34,7 @@ const HELP: &str = r"page-rs keys,
 #[allow(clippy::struct_excessive_bools)]
 pub struct Pager {
   buffer: Buffer,
+  title: String,
   top: Anchor,
   viewport: Viewport,
   running: bool,
@@ -52,12 +53,13 @@ impl Pager {
   /// # Errors
   ///
   /// Returns an error if querying the terminal dimensions fails.
-  pub fn new(buffer: Buffer, options: Options) -> anyhow::Result<Self> {
+  pub fn new(buffer: Buffer, title: String, options: Options) -> anyhow::Result<Self> {
     let (width, height) = terminal::size()?;
     let follow = options.initial_follow;
 
     Ok(Self {
       buffer,
+      title,
       top: Anchor::default(),
       viewport: Viewport::new(usize::from(width), usize::from(height)),
       running: true,
@@ -293,8 +295,7 @@ impl Pager {
     scratch.parse(raw, self.opts.ansi, self.opts.tab_width);
     match self.opts.wrap {
       WrapMode::None => 1,
-      WrapMode::Soft => scratch.count_rows(self.content_width(), true),
-      WrapMode::Hard => scratch.count_rows(self.content_width(), false),
+      WrapMode::Soft | WrapMode::Hard => scratch.count_rows(self.content_width(), self.opts.wrap),
     }
   }
 }

@@ -213,14 +213,14 @@ impl ParsedLine {
   }
 
   /// Lazily lay out the display rows of this line as byte ranges into [`ParsedLine::text`].
-  pub fn rows(&self, width: usize, word_wrap: bool) -> impl Iterator<Item = Range<usize>> + '_ {
-    wrap::row_ranges(&self.text, width, word_wrap)
+  pub fn rows(&self, width: usize, wrap_mode: WrapMode) -> impl Iterator<Item = Range<usize>> + '_ {
+    wrap::row_ranges(&self.text, width, wrap_mode)
   }
 
   /// Count display rows without retaining the row ranges.
   #[must_use]
-  pub fn count_rows(&self, width: usize, word_wrap: bool) -> usize {
-    self.rows(width, word_wrap).count()
+  pub fn count_rows(&self, width: usize, wrap_mode: WrapMode) -> usize {
+    self.rows(width, wrap_mode).count()
   }
 
   /// Width of this line in terminal columns.

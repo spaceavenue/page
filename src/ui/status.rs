@@ -351,5 +351,8 @@ fn text_width(text: &str) -> usize {
 }
 
 fn count_digits(number: usize) -> usize {
-  number.checked_ilog10().unwrap_or(0) as usize
+  number
+    .checked_ilog10()
+    .and_then(|digits| usize::try_from(digits).ok())
+    .map_or(1, |d| d + 1)
 }

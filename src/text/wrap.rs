@@ -3,11 +3,25 @@ use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::text::WrapMode;
+
+struct RowBoundary {
+  end: usize,
+  next_start: usize,
+}
+
+impl RowBoundary {
+  #[inline]
+  const fn new(end: usize, next_start: usize) -> Self {
+    Self { end, next_start }
+  }
+}
+
 /// Return display rows of `text`.
 pub(super) fn row_ranges(
   text: &str,
   width: usize,
-  word_wrap: bool,
+  wrap_mode: WrapMode,
 ) -> impl Iterator<Item = Range<usize>> + '_ {
   let width = width.max(1);
   let mut start = 0usize;
@@ -21,26 +35,26 @@ pub(super) fn row_ranges(
       }
     }
 
-    let (end, next) = next_row(text, start, width, word_wrap);
-    if end <= start {
+    let boundary = next_row(text, start, width, wrap_mode);
+    if boundary.end <= start {
       return None;
     }
 
-    let range = start..end;
-    start = next;
+    let range = start..boundary.end;
+    start = boundary.next_start;
     Some(range)
   })
 }
 
 /// Return the byte range of the next row and the byte offset where the row after it starts. These
 /// differ when whitespace at the break is skipped.
-fn next_row(text: &str, start: usize, width: usize, word_wrap: bool) -> (usize, usize) {
+fn next_row(text: &str, start: usize, width: usize, wrap_mode: WrapMode) -> RowBoundary {
   let mut column = 0usize;
   let mut last_break = None;
   let mut end = start;
 
   let Some(rest) = text.get(start..) else {
-    return (text.len(), text.len());
+    return RowBoundary::new(text.len(), text.len());
   };
 
   for (offset, grapheme) in rest.grapheme_indices(true) {
@@ -51,20 +65,22 @@ fn next_row(text: &str, start: usize, width: usize, word_wrap: bool) -> (usize, 
       // Breaking on whitespace itself is always safe: end the row before the overflow space and
       // skip the whole run at the start of the next.
       if is_wrap_space(grapheme) {
-        return (index, skip_wrap_spaces(text, index));
+        return RowBoundary::new(index, skip_wrap_spaces(text, index));
       }
 
-      if word_wrap && let Some(break_at) = last_break {
+      if matches!(wrap_mode, WrapMode::Soft)
+        && let Some(break_at) = last_break
+      {
         // Moving a word that is wider than the whole row to a fresh row would just produce a row
         // containing only the indentation, so hard-break it where it is instead.
         return if word_fits(text, break_at, width) {
-          (break_at, break_at)
+          RowBoundary::new(break_at, break_at)
         } else {
-          (index, index)
+          RowBoundary::new(index, index)
         };
       }
 
-      return (index, index);
+      return RowBoundary::new(index, index);
     }
 
     column += glyph_width;
@@ -75,7 +91,7 @@ fn next_row(text: &str, start: usize, width: usize, word_wrap: bool) -> (usize, 
     }
   }
 
-  (end, end)
+  RowBoundary::new(end, end)
 }
 
 /// Whether the word starting at `start` fits in `width` columns.
