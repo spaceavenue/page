@@ -1,23 +1,103 @@
+pub mod status;
 pub mod terminal;
 pub mod viewport;
 
-use std::fmt::{self, Display, Formatter, Write as _};
+use std::fmt::{self, Write as _};
+use std::io::Write;
 
-use crossterm::style::Color;
+use crossterm::cursor::MoveTo;
+use crossterm::queue;
+use crossterm::style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor};
+use crossterm::terminal::{Clear, ClearType};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
-use crate::text::reader::Reader;
+pub use self::status::{StatusContext, StatusTemplate};
 
-const TOKEN_FILENAME: &str = "filename";
-const TOKEN_LINES: &str = "lines";
-const TOKEN_PLUS: &str = "plus";
-const TOKEN_PERCENT: &str = "percent";
-const TOKEN_STATE: &str = "state";
+/// Content displayed on the bottom line of the pager.
+pub enum BarContent<'a> {
+  Status(&'a StatusContext<'a>),
+  Message(&'a str),
+}
+
+/// Clamps text to a display-column width, replaces controls, and pads spaces.
+struct PaddedLine<'a> {
+  text: &'a str,
+  width: usize,
+}
+
+impl<'a> PaddedLine<'a> {
+  const fn new(text: &'a str, width: usize) -> Self {
+    Self { text, width }
+  }
+}
+
+impl fmt::Display for PaddedLine<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let mut used = 0usize;
+
+    for grapheme in self.text.graphemes(true) {
+      let control = grapheme.chars().any(char::is_control);
+      let glyph_width = if control {
+        1
+      } else {
+        UnicodeWidthStr::width(grapheme)
+      };
+      if used + glyph_width > self.width {
+        break;
+      }
+      if control {
+        f.write_str(" ")?;
+      } else {
+        f.write_str(grapheme)?;
+      }
+      used += glyph_width;
+    }
+
+    for _ in used..self.width {
+      f.write_str(" ")?;
+    }
+    Ok(())
+  }
+}
 
 /// Pager colors and status-bar template.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Ui {
   pub theme: Theme,
-  pub status: StatusBar,
+  pub status: StatusTemplate,
+}
+
+impl Ui {
+  /// Render a formatted bottom bar to `out` at `row`, clamped to `width` columns.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if writing to `out` fails.
+  pub fn render_bar(
+    &self,
+    out: &mut impl Write,
+    row: u16,
+    width: usize,
+    content: &BarContent<'_>,
+    buf: &mut String,
+  ) -> anyhow::Result<()> {
+    buf.clear();
+    match content {
+      BarContent::Status(ctx) => write!(buf, "{}", self.status.display(ctx))?,
+      BarContent::Message(msg) => buf.push_str(msg),
+    }
+    queue!(
+      out,
+      MoveTo(0, row),
+      Clear(ClearType::CurrentLine),
+      SetForegroundColor(self.theme.status_fg),
+      SetBackgroundColor(self.theme.status_bg),
+      Print(PaddedLine::new(buf, width)),
+      ResetColor
+    )?;
+    Ok(())
+  }
 }
 
 /// Colors used by the pager.
@@ -36,94 +116,6 @@ impl Default for Theme {
       status_bg: Color::Black,
       gutter_fg: Color::DarkGrey,
       filler_fg: Color::Blue,
-    }
-  }
-}
-
-/// Values available to the status-bar template.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StatusContext<'a> {
-  pub filename: &'a str,
-  pub lines: usize,
-  pub percent: usize,
-  pub reading: bool,
-}
-
-impl<'a> StatusContext<'a> {
-  #[must_use]
-  pub const fn new(filename: &'a str, lines: usize, percent: usize, reading: bool) -> Self {
-    Self {
-      filename,
-      lines,
-      percent,
-      reading,
-    }
-  }
-}
-
-/// Template for the status bar. More tokens will be added (probably) with a config file parser.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StatusBar {
-  pub template: String,
-}
-
-impl Default for StatusBar {
-  fn default() -> Self {
-    Self {
-      template: "{filename} {lines}{plus} lines {percent}% {state}".to_string(),
-    }
-  }
-}
-
-/// Adapter for formatting a status bar.
-#[derive(Clone, Copy, Debug)]
-pub struct StatusDisplay<'a> {
-  status: &'a StatusBar,
-  context: &'a StatusContext<'a>,
-}
-
-impl Display for StatusDisplay<'_> {
-  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    let mut reader = Reader::new(&self.status.template);
-    while let Some(ch) = reader.bump() {
-      if ch != '{' {
-        f.write_char(ch)?;
-        continue;
-      }
-
-      let token = reader.read_until('}');
-      if !reader.eat('}') {
-        f.write_char('{')?;
-        f.write_str(token)?;
-        break;
-      }
-
-      match token {
-        TOKEN_FILENAME => f.write_str(self.context.filename)?,
-        TOKEN_LINES => write!(f, "{}", self.context.lines)?,
-        TOKEN_PLUS if self.context.reading => f.write_char('+')?,
-        TOKEN_PERCENT => write!(f, "{}", self.context.percent)?,
-        TOKEN_STATE if self.context.reading => f.write_str("[reading...]")?,
-        TOKEN_PLUS | TOKEN_STATE => {}
-        _ => {
-          f.write_char('{')?;
-          f.write_str(token)?;
-          f.write_char('}')?;
-        }
-      }
-    }
-
-    Ok(())
-  }
-}
-
-impl StatusBar {
-  /// Return a [`Display`] adapter for the given status context.
-  #[must_use]
-  pub const fn display<'a>(&'a self, context: &'a StatusContext<'a>) -> StatusDisplay<'a> {
-    StatusDisplay {
-      status: self,
-      context,
     }
   }
 }

@@ -25,6 +25,7 @@ impl Viewport {
 
   /// Get viewport height.
   #[must_use]
+  #[cfg_attr(not(test), allow(dead_code))]
   pub const fn height(self) -> usize {
     self.height
   }

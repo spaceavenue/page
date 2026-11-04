@@ -1,55 +1,14 @@
-use std::fmt::{self, Write};
 use std::io;
 
 use crossterm::cursor::MoveTo;
 use crossterm::queue;
-use crossterm::style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor};
+use crossterm::style::{Print, ResetColor, SetForegroundColor};
 use crossterm::terminal::{Clear, ClearType};
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 use super::mode::Mode;
 use super::{HELP, Pager};
 use crate::text::WrapMode;
-use crate::ui::{StatusContext, StatusDisplay};
-
-/// Status line clamped to a display-column width.
-struct StatusLine<'a> {
-  text: &'a str,
-  width: usize,
-}
-impl<'a> StatusLine<'a> {
-  fn new(text: &'a str, width: usize) -> Self {
-    Self { text, width }
-  }
-}
-
-impl fmt::Display for StatusLine<'_> {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let mut used = 0usize;
-
-    for grapheme in self.text.graphemes(true) {
-      let control = grapheme.chars().any(char::is_control);
-      let glyph_width = if control {
-        1
-      } else {
-        UnicodeWidthStr::width(grapheme)
-      };
-      if used + glyph_width > self.width {
-        break;
-      }
-      control
-        .then(|| f.write_str(" "))
-        .unwrap_or_else(|| f.write_str(grapheme))?;
-      used += glyph_width;
-    }
-
-    for _ in used..self.width {
-      f.write_str(" ")?;
-    }
-    Ok(())
-  }
-}
+use crate::ui::{BarContent, StatusContext};
 
 impl Pager {
   /// Render the current frame to `out`.
@@ -144,6 +103,7 @@ impl Pager {
     out.flush()?;
     Ok(())
   }
+
   fn render_gutter(
     &self,
     out: &mut impl io::Write,
@@ -180,15 +140,13 @@ impl Pager {
     }
 
     let footer_row = u16::try_from(self.viewport.last_row())?;
-    self.status_buf.clear();
-    write!(&mut self.status_buf, "{}", "Press any key to close.")?;
-    queue!(
+    self.opts.ui.render_bar(
       out,
-      MoveTo(0, footer_row),
-      Print(StatusLine::new(&self.status_buf, self.viewport.width()))
-    )?;
-
-    Ok(())
+      footer_row,
+      self.viewport.width(),
+      &BarContent::Message("Press any key to close."),
+      &mut self.status_buf,
+    )
   }
 
   fn render_status(&mut self, out: &mut impl io::Write) -> anyhow::Result<()> {
@@ -198,24 +156,14 @@ impl Pager {
     let percent = self.viewport.percent(self.top.line, lines);
 
     let context = StatusContext::new(filename, lines, percent, reading);
-    self.status_buf.clear();
-    write!(
-      &mut self.status_buf,
-      "{}",
-      self.opts.ui.status.display(&context)
-    )?;
-
     let status_row = u16::try_from(self.viewport.last_row())?;
 
-    queue!(
+    self.opts.ui.render_bar(
       out,
-      MoveTo(0, status_row),
-      Clear(ClearType::CurrentLine),
-      SetForegroundColor(self.opts.ui.theme.status_fg),
-      SetBackgroundColor(self.opts.ui.theme.status_bg),
-      Print(StatusLine::new(&self.status_buf, self.viewport.width())),
-      ResetColor
-    )?;
-    Ok(())
+      status_row,
+      self.viewport.width(),
+      &BarContent::Status(&context),
+      &mut self.status_buf,
+    )
   }
 }
