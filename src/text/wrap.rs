@@ -1,6 +1,7 @@
 use std::ops::Range;
 
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// Return display rows of `text`.
 pub(super) fn row_ranges(
@@ -42,14 +43,14 @@ fn next_row(text: &str, start: usize, width: usize, word_wrap: bool) -> (usize, 
     return (text.len(), text.len());
   };
 
-  for (offset, ch) in rest.char_indices() {
+  for (offset, grapheme) in rest.grapheme_indices(true) {
     let index = start + offset;
-    let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+    let glyph_width = UnicodeWidthStr::width(grapheme);
 
-    if char_width > 0 && column > 0 && column + char_width > width {
+    if glyph_width > 0 && column > 0 && column + glyph_width > width {
       // Breaking on whitespace itself is always safe: end the row before the overflow space and
       // skip the whole run at the start of the next.
-      if is_wrap_space(ch) {
+      if is_wrap_space(grapheme) {
         return (index, skip_wrap_spaces(text, index));
       }
 
@@ -66,10 +67,10 @@ fn next_row(text: &str, start: usize, width: usize, word_wrap: bool) -> (usize, 
       return (index, index);
     }
 
-    column += char_width;
-    end = index + ch.len_utf8();
+    column += glyph_width;
+    end = index + grapheme.len();
 
-    if is_wrap_space(ch) {
+    if is_wrap_space(grapheme) {
       last_break = Some(end);
     }
   }
@@ -84,11 +85,11 @@ fn word_fits(text: &str, start: usize, width: usize) -> bool {
     return true;
   };
 
-  for ch in rest.chars() {
-    if is_wrap_space(ch) {
+  for grapheme in rest.graphemes(true) {
+    if is_wrap_space(grapheme) {
       return true;
     }
-    column += UnicodeWidthChar::width(ch).unwrap_or(0);
+    column += UnicodeWidthStr::width(grapheme);
     if column > width {
       return false;
     }
@@ -97,16 +98,27 @@ fn word_fits(text: &str, start: usize, width: usize) -> bool {
   true
 }
 
-const fn is_wrap_space(ch: char) -> bool {
+fn is_wrap_space(grapheme: &str) -> bool {
+  let mut chars = grapheme.chars();
+  let Some(ch) = chars.next() else {
+    return false;
+  };
+  chars.next().is_none() && is_wrap_space_char(ch)
+}
+
+const fn is_wrap_space_char(ch: char) -> bool {
   ch == ' ' || (ch.is_whitespace() && !matches!(ch, '\u{00a0}' | '\u{202f}'))
 }
 
 fn skip_wrap_spaces(text: &str, mut index: usize) -> usize {
-  while let Some(ch) = text.get(index..).and_then(|rest| rest.chars().next()) {
-    if !is_wrap_space(ch) {
+  while let Some(rest) = text.get(index..) {
+    let Some(grapheme) = rest.graphemes(true).next() else {
+      break;
+    };
+    if !is_wrap_space(grapheme) {
       break;
     }
-    index += ch.len_utf8();
+    index += grapheme.len();
   }
   index
 }

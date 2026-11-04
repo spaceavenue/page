@@ -12,6 +12,7 @@ anyhow = { version = "1.0.104", default-features = false }
 crossterm = { version = "0.29.0", default-features = false, features = ["events"] }
 memchr = { version = "2.8.3" }
 memmap2 = { version = "0.9.11", default-features = false }
+unicode-segmentation = { version = "1.13.3", default-features = false }
 unicode-width = { version = "0.2.2", default-features = false, features = ["cjk"] }
 
 [dependencies.clap]

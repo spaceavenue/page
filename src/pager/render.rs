@@ -1,16 +1,55 @@
-use std::io::Write;
+use std::fmt::{self, Write};
+use std::io;
 
 use crossterm::cursor::MoveTo;
 use crossterm::queue;
 use crossterm::style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::terminal::{Clear, ClearType};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use super::mode::Mode;
 use super::{HELP, Pager};
 use crate::text::WrapMode;
-use crate::ui::StatusContext;
+use crate::ui::{StatusContext, StatusDisplay};
 
-// use crate::{StatusContext, WrapMode};
+/// Status line clamped to a display-column width.
+struct StatusLine<'a> {
+  text: &'a str,
+  width: usize,
+}
+impl<'a> StatusLine<'a> {
+  fn new(text: &'a str, width: usize) -> Self {
+    Self { text, width }
+  }
+}
+
+impl fmt::Display for StatusLine<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let mut used = 0usize;
+
+    for grapheme in self.text.graphemes(true) {
+      let control = grapheme.chars().any(char::is_control);
+      let glyph_width = if control {
+        1
+      } else {
+        UnicodeWidthStr::width(grapheme)
+      };
+      if used + glyph_width > self.width {
+        break;
+      }
+      control
+        .then(|| f.write_str(" "))
+        .unwrap_or_else(|| f.write_str(grapheme))?;
+      used += glyph_width;
+    }
+
+    for _ in used..self.width {
+      f.write_str(" ")?;
+    }
+    Ok(())
+  }
+}
 
 impl Pager {
   /// Render the current frame to `out`.
@@ -19,7 +58,7 @@ impl Pager {
   ///
   /// Returns an error if terminal output fails or a coordinate cannot be
   /// represented as a `u16`.
-  pub fn render(&mut self, out: &mut impl Write) -> anyhow::Result<()> {
+  pub fn render(&mut self, out: &mut impl io::Write) -> anyhow::Result<()> {
     if matches!(&self.mode, Mode::Help) {
       self.render_help(out)?;
       out.flush()?;
@@ -41,15 +80,23 @@ impl Pager {
         break;
       };
 
-      self.parsed.parse(raw, self.opts.ansi, self.opts.tab_width);
+      self
+        .parsed_buf
+        .parse(raw, self.opts.ansi, self.opts.tab_width);
 
       match self.opts.wrap {
         WrapMode::None => {
-          let range = self.parsed.column_range(self.left, content_width);
+          let window = self.parsed_buf.column_window(self.left, content_width);
           let cursor_row = u16::try_from(screen_row)?;
           queue!(out, MoveTo(0, cursor_row), Clear(ClearType::CurrentLine))?;
           self.render_gutter(out, line, true, gutter)?;
-          self.parsed.render_range(out, range)?;
+          if window.pad > 0 {
+            queue!(
+              out,
+              Print(format_args!("{:width$}", "", width = window.pad))
+            )?;
+          }
+          self.parsed_buf.render_range(out, window.range)?;
           screen_row += 1;
         }
         WrapMode::Soft | WrapMode::Hard => {
@@ -57,11 +104,11 @@ impl Pager {
           let start_row = if skip == 0 {
             0
           } else {
-            skip.min(self.parsed.count_rows(content_width, word_wrap) - 1)
+            skip.min(self.parsed_buf.count_rows(content_width, word_wrap) - 1)
           };
 
           let rows = self
-            .parsed
+            .parsed_buf
             .rows(content_width, word_wrap)
             .skip(start_row)
             .take(body - screen_row);
@@ -71,7 +118,7 @@ impl Pager {
             queue!(out, MoveTo(0, cursor_row), Clear(ClearType::CurrentLine))?;
             let first_row = start_row == 0 && offset == 0;
             self.render_gutter(out, line, first_row, gutter)?;
-            self.parsed.render_range(out, range)?;
+            self.parsed_buf.render_range(out, range)?;
             screen_row += 1;
           }
         }
@@ -99,7 +146,7 @@ impl Pager {
   }
   fn render_gutter(
     &self,
-    out: &mut impl Write,
+    out: &mut impl io::Write,
     line: usize,
     first_row: bool,
     gutter: usize,
@@ -113,17 +160,17 @@ impl Pager {
       queue!(
         out,
         SetForegroundColor(self.opts.ui.theme.gutter_fg),
-        Print(format!("{:>number_width$} ", line + 1)),
+        Print(format_args!("{:>number_width$} ", line + 1)),
         ResetColor
       )?;
     } else {
-      queue!(out, Print(" ".repeat(gutter)))?;
+      queue!(out, Print(format_args!("{:width$}", "", width = gutter)))?;
     }
 
     Ok(())
   }
 
-  fn render_help(&self, out: &mut impl Write) -> anyhow::Result<()> {
+  fn render_help(&mut self, out: &mut impl io::Write) -> anyhow::Result<()> {
     queue!(out, MoveTo(0, 0), Clear(ClearType::All))?;
 
     for (row, line) in HELP.lines().take(self.viewport.body_height()).enumerate() {
@@ -132,21 +179,19 @@ impl Pager {
       queue!(out, MoveTo(0, cursor_row), Print(text))?;
     }
 
-    if self.viewport.height() > 0 {
-      let footer_row = u16::try_from(self.viewport.last_row())?;
-      let footer = "Press any key to close."
-        .chars()
-        .take(self.viewport.width())
-        .collect::<String>();
-      queue!(out, MoveTo(0, footer_row), Print(footer))?;
-    }
+    let footer_row = u16::try_from(self.viewport.last_row())?;
+    self.status_buf.clear();
+    write!(&mut self.status_buf, "{}", "Press any key to close.")?;
+    queue!(
+      out,
+      MoveTo(0, footer_row),
+      Print(StatusLine::new(&self.status_buf, self.viewport.width()))
+    )?;
 
     Ok(())
   }
 
-  fn render_status(&mut self, out: &mut impl Write) -> anyhow::Result<()> {
-    use std::fmt::Write as _;
-
+  fn render_status(&mut self, out: &mut impl io::Write) -> anyhow::Result<()> {
     let filename = self.buffer.filename();
     let lines = self.buffer.line_count();
     let reading = self.buffer.is_streaming();
@@ -168,11 +213,7 @@ impl Pager {
       Clear(ClearType::CurrentLine),
       SetForegroundColor(self.opts.ui.theme.status_fg),
       SetBackgroundColor(self.opts.ui.theme.status_bg),
-      Print(format_args!(
-        "{status:<width$}",
-        status = self.status_buf,
-        width = self.viewport.width()
-      )),
+      Print(StatusLine::new(&self.status_buf, self.viewport.width())),
       ResetColor
     )?;
     Ok(())

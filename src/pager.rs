@@ -40,9 +40,9 @@ pub struct Pager {
   dirty: bool,
   mode: Mode,
   left: usize,
-  follow: bool,
+  following: bool,
   opts: Options,
-  parsed: ParsedLine,
+  parsed_buf: ParsedLine,
   status_buf: String,
 }
 
@@ -64,9 +64,9 @@ impl Pager {
       dirty: true,
       mode: Mode::Normal,
       left: 0,
-      follow,
+      following: follow,
       opts: options,
-      parsed: ParsedLine::default(),
+      parsed_buf: ParsedLine::default(),
       status_buf: String::new(),
     })
   }
@@ -101,7 +101,7 @@ impl Pager {
       let got_data = self.buffer.read_from_stdin()?;
       if got_data {
         self.dirty();
-        if self.follow {
+        if self.following {
           self.jump_to_bottom();
         }
       }
@@ -171,7 +171,7 @@ impl Pager {
       HalfPageUp => self.scroll_by(true, (body / 2).max(1)),
       HalfPageDown => self.scroll_by(false, (body / 2).max(1)),
       GotoTop => {
-        self.follow = false;
+        self.following = false;
         self.set_top(Anchor::default());
       }
       GotoBottom => self.jump_to_bottom(),
@@ -186,7 +186,7 @@ impl Pager {
 
   fn scroll_by(&mut self, up: bool, rows: usize) {
     if up {
-      self.follow = false;
+      self.following = false;
       self.top = self.rewind(self.top, rows);
       self.clamp_if_at_end();
       return;
@@ -249,7 +249,7 @@ impl Pager {
   fn jump_to_bottom(&mut self) {
     self.buffer.index_till_line(usize::MAX);
     self.top = self.max_top();
-    self.follow = self.buffer.is_streaming();
+    self.following = self.buffer.is_streaming();
   }
 
   fn clamp_if_at_end(&mut self) {

@@ -6,7 +6,10 @@ mod wrap;
 use std::num::NonZeroUsize;
 use std::ops::Range;
 
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use crossterm::style::Attribute;
+use memchr::memchr;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::text::ansi::Style;
 use crate::text::reader::Reader;
@@ -28,6 +31,15 @@ pub enum WrapMode {
   None,
 }
 
+/// A horizontal viewport slice into a parsed line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ColumnWindow {
+  /// Blank columns to emit before [`ColumnWindow::range`].
+  pub pad: usize,
+  /// Byte range of the visible glyphs.
+  pub range: Range<usize>,
+}
+
 /// A styled run in a parsed line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Run {
@@ -36,17 +48,120 @@ pub struct Run {
   style: Style,
 }
 
-impl Run {
-  /// Start offset of this run in the line's plain text. Test-only.
-  #[must_use]
-  pub const fn start(&self) -> usize {
-    self.start
+struct LineBuilder<'a> {
+  line: &'a mut ParsedLine,
+  base_style: Style,
+  run_style: Style,
+  run_start: usize,
+  column: usize,
+}
+
+impl<'a> LineBuilder<'a> {
+  fn new(line: &'a mut ParsedLine) -> Self {
+    Self {
+      line,
+      base_style: Style::default(),
+      run_style: Style::default(),
+      run_start: 0,
+      column: 0,
+    }
   }
 
-  /// Visual style of this run. Test-only.
-  #[must_use]
-  pub const fn style(&self) -> Style {
-    self.style
+  fn parse_text(&mut self, source: &str, ansi_enabled: bool, tab_width: NonZeroUsize) {
+    let mut reader = Reader::new(source);
+    while let Some(ch) = reader.peek() {
+      match ch {
+        ESC => self.base_style = ansi::escape(&mut reader, ansi_enabled, self.base_style),
+        '\t' => {
+          reader.bump();
+          self.push_tab(tab_width);
+        }
+        // Lines never normally contain a newline, but be defensive.
+        '\n' => {
+          reader.bump();
+        }
+        // Printable ASCII is one column per byte, so copy whole runs at once.
+        ' '..='~' => {
+          let run = reader.read_while(|c| matches!(c, ' '..='~'));
+          self.push_run(run);
+        }
+        _ if ch.is_ascii_control() => {
+          reader.bump();
+          self.push_caret(ch);
+        }
+        // C1 controls are valid UTF-8 but some terminals still interpret them
+        // as escape introducers.
+        _ if ch.is_control() => {
+          reader.bump();
+          self.push_replacement();
+        }
+        _ => {
+          let grapheme = reader.read_grapheme();
+          self.push_grapheme(grapheme, self.base_style);
+        }
+      }
+    }
+  }
+
+  fn finish(mut self) {
+    self.flush();
+  }
+
+  fn flush(&mut self) {
+    if self.run_start >= self.line.text.len() {
+      return;
+    }
+    self.line.runs.push(Run {
+      style: self.run_style,
+      start: self.run_start,
+    });
+    self.run_start = self.line.text.len();
+  }
+
+  fn begin(&mut self, style: Style) {
+    if style != self.run_style {
+      self.flush();
+      self.run_style = style;
+    }
+  }
+
+  fn push_run(&mut self, text: &str) {
+    self.begin(self.base_style);
+    self.line.text.push_str(text);
+    self.column += text.len();
+  }
+
+  fn push_grapheme(&mut self, grapheme: &str, style: Style) {
+    self.begin(style);
+    self.line.text.push_str(grapheme);
+    self.column += UnicodeWidthStr::width(grapheme);
+  }
+
+  fn push_overstrike(&mut self, ch: char, attr: Attribute) {
+    let mut style = self.base_style;
+    style.attrs.set(attr);
+    let mut buf = [0u8; 4];
+    self.push_grapheme(ch.encode_utf8(&mut buf), style);
+  }
+
+  fn push_caret(&mut self, ch: char) {
+    self.begin(self.base_style);
+    self.line.text.push('^');
+    self.line.text.push(caret(ch));
+    self.column += 2;
+  }
+
+  fn push_replacement(&mut self) {
+    self.begin(self.base_style);
+    self.line.text.push('\u{fffd}');
+    self.column += 1;
+  }
+
+  fn push_tab(&mut self, tab_width: NonZeroUsize) {
+    let spaces = tab_width.get() - (self.column % tab_width);
+    self.begin(self.base_style);
+    self.line.text.extend(std::iter::repeat_n(' ', spaces));
+    self.column += spaces;
   }
 }
 
@@ -68,83 +183,33 @@ impl ParsedLine {
     let source = String::from_utf8_lossy(raw);
     let source = source.strip_suffix('\n').unwrap_or(&source);
     let source = source.strip_suffix('\r').unwrap_or(source);
+    let mut state = LineBuilder::new(self);
+    let mut rest = source;
 
-    let mut style = Style::default();
-    let mut run_start = 0usize;
-    let mut column = 0usize;
-    let mut reader = Reader::new(source);
+    while let Some(backspace) = memchr(b'\x08', rest.as_bytes()) {
+      let Some(prefix) = rest.get(..backspace) else {
+        break;
+      };
+      let next = rest.get(backspace + 1..).and_then(|t| t.chars().next());
+      let last = prefix.chars().next_back();
 
-    while let Some(ch) = reader.peek() {
-      match ch {
-        ESC => {
-          let next_style = ansi::escape(&mut reader, ansi_enabled, style);
-
-          if next_style != style {
-            self.flush_run(&mut run_start, style);
-            style = next_style;
-          }
+      if let Some((base, attr)) = overstrike(last, next) {
+        let cut = prefix.len().saturating_sub(last.map_or(0, char::len_utf8));
+        if let Some(clean_prefix) = prefix.get(..cut) {
+          state.parse_text(clean_prefix, ansi_enabled, tab_width);
         }
-        '\t' => {
-          reader.bump();
-          let spaces = tab_width.get() - (column % tab_width);
-          self.text.extend(std::iter::repeat_n(' ', spaces));
-          column += spaces;
-        }
-        // Lines never normally contain a newline, but be defensive.
-        '\n' => {
-          reader.bump();
-        }
-        // Printable ASCII is one column per byte, so copy whole runs at once.
-        ' '..='~' => {
-          let run = reader.read_while(|c| matches!(c, ' '..='~'));
-          self.text.push_str(run);
-          column += run.len();
-        }
-        _ if ch.is_ascii_control() => {
-          reader.bump();
-          self.text.push('^');
-          self.text.push(caret(ch));
-          column += 2;
-        }
-        // C1 controls are valid UTF-8 but some terminals still interpret them as escape
-        // introducers.
-        _ if ch.is_control() => {
-          reader.bump();
-          self.text.push('\u{fffd}');
-          column += 1;
-        }
-        _ => {
-          reader.bump();
-          self.text.push(ch);
-          column += UnicodeWidthChar::width(ch).unwrap_or(0);
-        }
+        state.push_overstrike(base, attr);
+        let next_start = backspace + 1 + base.len_utf8();
+        rest = rest.get(next_start..).unwrap_or("");
+      } else {
+        state.parse_text(prefix, ansi_enabled, tab_width);
+        state.push_caret('\x08');
+        rest = rest.get(backspace + 1..).unwrap_or("");
       }
     }
 
-    self.flush_run(&mut run_start, style);
-  }
-
-  fn flush_run(&mut self, run_start: &mut usize, style: Style) {
-    if *run_start >= self.text.len() {
-      return;
-    }
-    self.runs.push(Run {
-      start: *run_start,
-      style,
-    });
-    *run_start = self.text.len();
-  }
-
-  /// The plain text of this parsed line.
-  #[must_use]
-  pub fn text(&self) -> &str {
-    &self.text
-  }
-
-  /// Style runs.
-  #[must_use]
-  pub fn runs(&self) -> &[Run] {
-    &self.runs
+    state.parse_text(rest, ansi_enabled, tab_width);
+    state.finish();
   }
 
   /// Lazily lay out the display rows of this line as byte ranges into [`ParsedLine::text`].
@@ -164,15 +229,18 @@ impl ParsedLine {
     UnicodeWidthStr::width(self.text.as_str())
   }
 
-  /// Byte range covering the display columns `[left, left + width)`.
+  /// Byte range and leading padding covering the display columns `[left, left + width)`.
   ///
-  /// A wide character that straddles the left edge is skipped rather than split. If `left` is past
-  /// the end of the line the returned range is empty.
+  /// A wide glyph that straddles the left edge is skipped rather than split; the
+  /// skipped columns are reported in [`ColumnWindow::pad`].
   #[must_use]
-  pub fn column_range(&self, left: usize, width: usize) -> Range<usize> {
+  pub fn column_window(&self, left: usize, width: usize) -> ColumnWindow {
     if width == 0 || self.text.is_empty() {
       let end = self.text.len();
-      return end..end;
+      return ColumnWindow {
+        pad: 0,
+        range: end..end,
+      };
     }
 
     let limit = left.saturating_add(width);
@@ -180,13 +248,13 @@ impl ParsedLine {
     let mut start = None;
     let mut end = 0usize;
 
-    for (index, ch) in self.text.char_indices() {
-      let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-      let next = column + char_width;
+    for (index, grapheme) in self.text.grapheme_indices(true) {
+      let glyph_width = UnicodeWidthStr::width(grapheme);
+      let next = column + glyph_width;
 
-      if char_width == 0 {
+      if glyph_width == 0 {
         if start.is_some() {
-          end = index + ch.len_utf8();
+          end = index + grapheme.len();
         }
         column = next;
         continue;
@@ -197,7 +265,7 @@ impl ParsedLine {
         continue;
       }
       if column < left {
-        // A wide character straddles the left edge.
+        // A wide glyph straddles the left edge.
         column = next;
         continue;
       }
@@ -205,13 +273,44 @@ impl ParsedLine {
         break;
       }
 
-      start.get_or_insert(index);
-      end = index + ch.len_utf8();
+      start.get_or_insert((index, column));
+      end = index + grapheme.len();
       column = next;
     }
 
-    start.map_or(self.text.len()..self.text.len(), |start| start..end)
+    match start {
+      Some((start, start_column)) => ColumnWindow {
+        pad: start_column - left,
+        range: start..end,
+      },
+      None => ColumnWindow {
+        pad: 0,
+        range: self.text.len()..self.text.len(),
+      },
+    }
   }
+}
+
+// `git <subcommand> --help` likes to do things it's own way. `X\bX` is bold, `_\bX` is underlined.
+// Man pages, I swear...
+fn overstrike(last: Option<char>, next: Option<char>) -> Option<(char, Attribute)> {
+  let first = last?;
+  let next = next?;
+  if first.is_control() || next.is_control() {
+    return None;
+  }
+
+  let (base, attribute) = if first == next {
+    (next, Attribute::Bold)
+  } else if first == '_' {
+    (next, Attribute::Underlined)
+  } else if next == '_' {
+    (first, Attribute::Underlined)
+  } else {
+    return None;
+  };
+
+  Some((base, attribute))
 }
 
 fn caret(ch: char) -> char {

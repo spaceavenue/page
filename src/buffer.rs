@@ -253,7 +253,7 @@ mod tests {
   fn buffer_from(contents: &[u8]) -> Buffer {
     let contents = contents.to_vec();
     Buffer {
-      source: BufferSource::Heap(contents.into()),
+      source: BufferSource::Heap(contents),
       line_offsets: Vec::new(),
       scanned: 0,
       filename: "test".into(),

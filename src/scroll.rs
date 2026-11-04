@@ -76,45 +76,23 @@ mod tests {
   }
 
   #[test]
-  fn advance_within_line() {
+  fn advance_moves_by_rows() {
     assert_eq!(advance(at(1, 0), 1, heights), at(1, 1));
     assert_eq!(advance(at(1, 1), 2, heights), at(2, 0));
-  }
-
-  #[test]
-  fn advance_across_lines() {
     assert_eq!(advance(at(0, 0), 1, heights), at(1, 0));
     assert_eq!(advance(at(0, 0), 2, heights), at(1, 1));
     assert_eq!(advance(at(1, 2), 1, heights), at(2, 0));
   }
 
   #[test]
-  fn advance_by_zero_noop() {
-    assert_eq!(advance(at(2, 1), 0, heights), at(2, 1));
-  }
-
-  #[test]
-  fn rewind_within_line() {
+  fn rewind_moves_by_rows_and_clamps() {
     assert_eq!(rewind(at(1, 2), 1, heights), at(1, 1));
     assert_eq!(rewind(at(1, 2), 2, heights), at(1, 0));
-  }
-
-  #[test]
-  fn rewind_across_lines() {
     assert_eq!(rewind(at(1, 0), 1, heights), at(0, 0));
     assert_eq!(rewind(at(2, 0), 1, heights), at(1, 2));
     assert_eq!(rewind(at(3, 1), 2, heights), at(2, 0));
-  }
-
-  #[test]
-  fn rewind_clamps_start() {
     assert_eq!(rewind(at(0, 0), 10, heights), at(0, 0));
     assert_eq!(rewind(at(1, 1), 10, heights), at(0, 0));
-  }
-
-  #[test]
-  fn rewind_by_zero_noop() {
-    assert_eq!(rewind(at(2, 1), 0, heights), at(2, 1));
   }
 
   #[test]

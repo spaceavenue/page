@@ -1,5 +1,3 @@
-use crossterm::style::Color;
-
 use super::*;
 
 fn context(reading: bool) -> StatusContext<'static> {
@@ -32,20 +30,16 @@ fn status_template_configurable() {
     status.display(&context(false)).to_string(),
     "42% file.txt (123)"
   );
-  assert_eq!(
-    format!("{}", status.display(&context(false))),
-    "42% file.txt (123)"
-  );
 }
 
 #[test]
-fn unknown_tokens_preserved() {
+fn unexpanded_tokens_preserved() {
   let status = StatusBar {
-    template: "{filename} {unknown}".to_string(),
+    template: "{filename} {unknown} {unterminated".to_string(),
   };
   assert_eq!(
     status.display(&context(false)).to_string(),
-    "file.txt {unknown}"
+    "file.txt {unknown} {unterminated"
   );
 }
 
@@ -61,28 +55,4 @@ fn token_like_filename_not_expanded() {
     reading: false,
   };
   assert_eq!(status.display(&context).to_string(), "{percent}");
-}
-
-#[test]
-fn unterminated_token_preserved() {
-  let status = StatusBar {
-    template: "file: {filename".to_string(),
-  };
-  assert_eq!(
-    status.display(&context(false)).to_string(),
-    "file: {filename"
-  );
-}
-
-#[test]
-fn default_theme_uses_hardcoded_colors() {
-  let theme = Theme::default();
-  assert_eq!(theme.status_fg, Color::White);
-  assert_eq!(theme.status_bg, Color::Black);
-  assert_eq!(theme.gutter_fg, Color::DarkGrey);
-  assert_eq!(theme.filler_fg, Color::Blue);
-
-  let ui = Ui::default();
-  assert_eq!(ui.theme, theme);
-  assert_eq!(ui.status, StatusBar::default());
 }

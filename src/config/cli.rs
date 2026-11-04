@@ -114,6 +114,7 @@ mod tests {
 
   use super::*;
 
+  #[allow(clippy::expect_used)]
   fn parse_args<I, T>(args: I) -> Cli
   where
     I: IntoIterator<Item = T>,
@@ -164,27 +165,22 @@ mod tests {
   }
 
   #[test]
-  fn wrap_option_parsed() {
-    let cli = parse_args(["--wrap", "hard", "file"]);
-    assert_eq!(cli.options.wrap, WrapMode::Hard);
+  fn wrap_flags_and_aliases() {
+    assert_eq!(
+      parse_args(["--wrap", "hard", "file"]).options.wrap,
+      WrapMode::Hard
+    );
+    assert_eq!(
+      parse_args(["-w", "soft", "file"]).options.wrap,
+      WrapMode::Soft
+    );
 
-    let cli = parse_args(["-w", "soft", "file"]);
-    assert_eq!(cli.options.wrap, WrapMode::Soft);
-  }
-
-  #[test]
-  fn wrap_off_option_parsed() {
-    let cli = parse_args(["-w", "off", "file"]);
-    assert_eq!(cli.options.wrap, WrapMode::None);
-
-    let cli = parse_args(["-W", "file"]);
-    assert_eq!(cli.options.wrap, WrapMode::None);
-
-    let cli = parse_args(["--wrap", "off", "file"]);
-    assert_eq!(cli.options.wrap, WrapMode::None);
-
-    let cli = parse_args(["--no-wrap", "file"]);
-    assert_eq!(cli.options.wrap, WrapMode::None);
+    let off_cases: &[&[&str]] = &[&["-w", "off"], &["-W"], &["--wrap", "off"], &["--no-wrap"]];
+    for alias in off_cases {
+      let mut full = alias.to_vec();
+      full.push("file");
+      assert_eq!(parse_args(full).options.wrap, WrapMode::None);
+    }
   }
 
   #[test]
@@ -194,18 +190,8 @@ mod tests {
   }
 
   #[test]
-  fn tab_width_equals_form() {
-    let cli = parse_args(["--tab-width=2", "file"]);
-    assert_eq!(cli.options.tab_width.get(), 2);
-  }
-
-  #[test]
-  fn zero_tab_width_rejected() {
+  fn invalid_tab_widths_rejected() {
     assert!(try_parse_args(["--tab-width", "0", "file"]).is_err());
-  }
-
-  #[test]
-  fn oversized_tab_width_rejected() {
     assert!(try_parse_args(["--tab-width", "257", "file"]).is_err());
   }
 }

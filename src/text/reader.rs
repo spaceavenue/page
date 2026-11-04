@@ -1,3 +1,5 @@
+use unicode_segmentation::UnicodeSegmentation;
+
 /// Forward only reader for an str.
 pub struct Reader<'a> {
   text: &'a str,
@@ -37,6 +39,14 @@ impl<'a> Reader<'a> {
     self.read_while(|ch| ch != delimiter)
   }
 
+  /// Read the next grapheme cluster.
+  pub(crate) fn read_grapheme(&mut self) -> &'a str {
+    let len = self.text.graphemes(true).next().map_or(0, str::len);
+    let (head, tail) = self.text.split_at_checked(len).unwrap_or((self.text, ""));
+    self.text = tail;
+    head
+  }
+
   /// If current char is `expected`, eat it (advance without returning it).
   pub(crate) fn eat(&mut self, expected: char) -> bool {
     let hit = self.peek() == Some(expected);
@@ -48,6 +58,7 @@ impl<'a> Reader<'a> {
 
   /// Get the remaining str.
   #[must_use]
+  #[cfg_attr(not(test), allow(dead_code))]
   pub const fn remaining(&self) -> &'a str {
     self.text
   }

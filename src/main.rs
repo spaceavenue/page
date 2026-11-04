@@ -1,7 +1,14 @@
-use page::buffer::Buffer;
-use page::config::cli::Cli;
-use page::pager::Pager;
-use page::ui::terminal::TerminalGuard;
+mod buffer;
+mod config;
+mod pager;
+mod scroll;
+mod text;
+mod ui;
+
+use buffer::Buffer;
+use config::cli::Cli;
+use pager::Pager;
+use ui::terminal::TerminalGuard;
 
 fn main() -> anyhow::Result<()> {
   let args = Cli::parse()?;
