@@ -40,36 +40,37 @@ pub struct StatusTemplate {
   pieces: Vec<Piece>,
 }
 
-/// A token that can appear in a status template.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TokenKind {
-  Filename,
-  Lines,
-  Plus,
-  Percent,
-  State,
+macro_rules! define_tokens {
+  (($ctx:ident) => {
+   $($variant:ident => $name:literal => $value:expr),* $(,)?
+  }) => {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TokenKind {
+      $($variant,)*
+    }
+    impl TokenKind {
+      fn parse(name: &str) -> Option<Self> {
+        match name {
+          $($name => Some(Self::$variant),)*
+          _ => None
+        }
+      }
+      fn value<'a>(self, $ctx: &StatusContext<'a>) -> Value<'a> {
+        match self {
+          $(Self::$variant => Value::from($value),)*
+        }
+      }
+    }
+  };
 }
 
-impl TokenKind {
-  fn parse(name: &str) -> Option<Self> {
-    Some(match name {
-      "filename" => Self::Filename,
-      "lines" => Self::Lines,
-      "plus" => Self::Plus,
-      "percent" => Self::Percent,
-      "state" => Self::State,
-      _ => return None,
-    })
-  }
-
-  const fn value<'a>(self, context: &StatusContext<'a>) -> Value<'a> {
-    match self {
-      Self::Filename => Value::Text(context.filename),
-      Self::Lines => Value::Number(context.lines),
-      Self::Plus => Value::Text(if context.reading { "+" } else { "" }),
-      Self::Percent => Value::Number(context.percent),
-      Self::State => Value::Text(if context.reading { "[reading...]" } else { "" }),
-    }
+define_tokens! {
+  (ctx) => {
+    Filename => "filename" => ctx.filename,
+    Lines => "lines" =>  ctx.lines,
+    Plus => "plus" => if ctx.reading {"+"} else {""},
+    Percent => "percent" =>  ctx.percent,
+    State => "state" => if ctx.reading {"[reading...]"} else {""},
   }
 }
 
@@ -77,6 +78,18 @@ impl TokenKind {
 enum Value<'a> {
   Text(&'a str),
   Number(usize),
+}
+
+impl<'a> From<&'a str> for Value<'a> {
+  fn from(value: &'a str) -> Self {
+    Self::Text(value)
+  }
+}
+
+impl From<usize> for Value<'_> {
+  fn from(value: usize) -> Self {
+    Self::Number(value)
+  }
 }
 
 impl Value<'_> {

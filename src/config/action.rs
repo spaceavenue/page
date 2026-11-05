@@ -18,37 +18,47 @@ pub enum Action {
   Quit,
 }
 
-const KEYMAP: &[(KeyCode, KeyModifiers, Action)] = {
-  use KeyCode::{Char, Down, End, Enter, Esc, Home, Left, PageDown, PageUp, Right, Up};
-  use KeyModifiers as Mod;
+macro_rules! keymap {
+  (@key $c:literal) => { KeyCode::Char($c) };
+  (@key $k:ident)   => { KeyCode::$k };
+  (@mods) => { KeyModifiers::NONE };
+  (@mods $($m:ident)|+) => { KeyModifiers::NONE $(.union(KeyModifiers::$m))+ };
 
-  &[
-    (Char('q'), Mod::NONE, Action::Quit),
-    (Esc, Mod::NONE, Action::Quit),
-    (Char('c'), Mod::CONTROL, Action::Quit),
-    (Up, Mod::NONE, Action::LineUp),
-    (Char('k'), Mod::NONE, Action::LineUp),
-    (Down, Mod::NONE, Action::LineDown),
-    (Char('j'), Mod::NONE, Action::LineDown),
-    (Enter, Mod::NONE, Action::LineDown),
-    (PageUp, Mod::NONE, Action::PageUp),
-    (Char('b'), Mod::CONTROL, Action::PageUp),
-    (PageDown, Mod::NONE, Action::PageDown),
-    (Char(' '), Mod::NONE, Action::PageDown),
-    (Char('f'), Mod::CONTROL, Action::PageDown),
-    (Char('u'), Mod::CONTROL, Action::HalfPageUp),
-    (Char('d'), Mod::CONTROL, Action::HalfPageDown),
-    (Char('g'), Mod::NONE, Action::GotoTop),
-    (Home, Mod::NONE, Action::GotoTop),
-    (Char('G'), Mod::NONE, Action::GotoBottom),
-    (End, Mod::NONE, Action::GotoBottom),
-    (Left, Mod::NONE, Action::ScrollLeft),
-    (Right, Mod::NONE, Action::ScrollRight),
-    (Char('0'), Mod::NONE, Action::ScrollHome),
-    (Char('h'), Mod::NONE, Action::Help),
-    (Char('?'), Mod::NONE, Action::Help),
-  ]
-};
+  (
+    $vis:vis $name:ident:
+    $(
+      [$($code:tt),+ $(,)?] $(with $($m:ident)|+)? => $action:ident
+    ),+ $(,)?
+  ) => {
+    $vis const $name: &[(&[KeyCode], KeyModifiers, Action,)] = &[
+      $((
+        &[$(keymap! (@key $code)),+],
+        keymap! (@mods $($($m)|+)?),
+        Action::$action,
+      )),+
+    ];
+  };
+}
+
+keymap! {
+    KEYMAP:
+    ['q', Esc]            => Quit,
+    ['c'] with CONTROL    => Quit,
+    [Up, 'k']             => LineUp,
+    [Down, 'j', Enter]    => LineDown,
+    [PageUp]              => PageUp,
+    ['b'] with CONTROL    => PageUp,
+    [PageDown, ' ']       => PageDown,
+    ['f'] with CONTROL    => PageDown,
+    ['u'] with CONTROL    => HalfPageUp,
+    ['d'] with CONTROL    => HalfPageDown,
+    ['g', Home]           => GotoTop,
+    ['G', End]            => GotoBottom,
+    [Left]                => ScrollLeft,
+    [Right]               => ScrollRight,
+    ['0']                 => ScrollHome,
+    ['h', '?']            => Help,
+}
 
 #[must_use]
 pub fn action_for_key(key: KeyEvent) -> Option<Action> {
@@ -61,6 +71,6 @@ pub fn action_for_key(key: KeyEvent) -> Option<Action> {
 
   KEYMAP
     .iter()
-    .find(|(code, map_mods, _)| *code == key.code && *map_mods == mods)
+    .find(|(codes, map_mods, _)| *map_mods == mods && codes.contains(&key.code))
     .map(|(.., action)| *action)
 }
