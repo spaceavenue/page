@@ -159,9 +159,11 @@ impl Buffer {
     }
 
     let stream = active.then_some(StdinStream { data_rx, vec_tx });
+    let mut stream_buf = StreamBuffer { data, stream };
+    stream_buf.read_chunk()?;
 
     Ok(Self {
-      source: BufferSource::Stream(StreamBuffer { data, stream }),
+      source: BufferSource::Stream(stream_buf),
       line_offsets: Vec::new(),
       scanned: 0,
     })

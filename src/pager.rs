@@ -57,7 +57,7 @@ impl Pager {
     let (width, height) = terminal::size()?;
     let follow = options.initial_follow;
 
-    Ok(Self {
+    let mut pager = Self {
       buffer,
       title,
       top: Anchor::default(),
@@ -70,7 +70,13 @@ impl Pager {
       opts: options,
       parsed_buf: ParsedLine::default(),
       status_buf: String::new(),
-    })
+    };
+
+    if pager.following {
+      pager.jump_to_bottom();
+    }
+
+    Ok(pager)
   }
 
   fn gutter_width(&self) -> usize {

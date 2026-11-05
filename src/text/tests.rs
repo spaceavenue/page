@@ -192,8 +192,13 @@ fn parsed(raw: &[u8]) -> ParsedLine {
 }
 
 fn rows(line: &ParsedLine, width: usize, word_wrap: bool) -> Vec<&str> {
+  let mode = if word_wrap {
+    WrapMode::Soft
+  } else {
+    WrapMode::Hard
+  };
   line
-    .rows(width, word_wrap)
+    .rows(width, mode)
     .map(|range| line.text.get(range).unwrap_or_default())
     .collect()
 }
@@ -202,7 +207,7 @@ fn rows(line: &ParsedLine, width: usize, word_wrap: bool) -> Vec<&str> {
 fn plain_text_unchanged() {
   let line = parsed(b"hello");
   assert_eq!(line.text, "hello");
-  assert_eq!(line.count_rows(80, true), 1);
+  assert_eq!(line.count_rows(80, WrapMode::Soft), 1);
   assert_eq!(rows(&line, 80, true), vec!["hello"]);
 }
 
@@ -249,7 +254,7 @@ fn hard_wrap_breaks_at_column_limit() {
   let line = parsed(b"abcdefgh");
   assert_eq!(rows(&line, 3, false), vec!["abc", "def", "gh"]);
   assert_eq!(rows(&line, 3, true), vec!["abc", "def", "gh"]);
-  assert_eq!(line.count_rows(3, false), 3);
+  assert_eq!(line.count_rows(3, WrapMode::Hard), 3);
 }
 
 #[test]
@@ -285,22 +290,22 @@ fn zero_width_characters_stay_with_base() {
 #[test]
 fn empty_lines_occupy_one_row() {
   let line = parsed(b"");
-  assert_eq!(line.count_rows(80, true), 1);
-  assert_eq!(line.rows(80, true).next(), Some(0..0));
+  assert_eq!(line.count_rows(80, WrapMode::Soft), 1);
+  assert_eq!(line.rows(80, WrapMode::Soft).next(), Some(0..0));
 }
 
 #[test]
 fn count_rows_matches_full_wrapping() {
   let line = parsed(b"aaaa bbbb cccc dddd");
   assert_eq!(rows(&line, 5, true).len(), 4);
-  assert_eq!(line.count_rows(5, true), 4);
+  assert_eq!(line.count_rows(5, WrapMode::Soft), 4);
 }
 
 #[test]
 fn render_row_emits_text_and_resets_style() {
   let line = parsed(b"\x1b[31mred\x1b[0m");
   let mut out = Vec::new();
-  let range = line.rows(80, true).next().unwrap_or(0..0);
+  let range = line.rows(80, WrapMode::Soft).next().unwrap_or(0..0);
   assert!(line.render_range(&mut out, range).is_ok());
   let output = String::from_utf8_lossy(&out);
   assert!(output.contains("red"));

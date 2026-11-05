@@ -4,4 +4,3 @@ wrap_comments = true
 comment_width = 100
 tab_spaces = 2
 match_block_trailing_comma = true
-# overflow_delimited_expr = true
