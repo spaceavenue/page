@@ -223,6 +223,12 @@ impl ParsedLine {
     self.rows(width, wrap_mode).count()
   }
 
+  /// Printable text of this line with tabs expanded and control sequences stripped.
+  #[must_use]
+  pub fn text(&self) -> &str {
+    &self.text
+  }
+
   /// Width of this line in terminal columns.
   #[must_use]
   pub fn display_width(&self) -> usize {

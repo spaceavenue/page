@@ -2,6 +2,7 @@ mod buffer;
 mod config;
 mod pager;
 mod scroll;
+mod search;
 mod text;
 mod ui;
 

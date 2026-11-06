@@ -16,10 +16,10 @@ use crate::config::cli::Input;
 const MMAP_THRESHOLD: usize = 64 * 1024; // 64 KiB
 
 /// Read stdin in chunks of 64KiB.
-const STDIN_CHUNK_SIZE: usize = 64 * 1024;
+const STDIN_CHUNK: usize = 64 * 1024;
 
 /// How much to stream ahead of current line before blocking the pipe.
-const STDIN_CHANNEL_CAPACITY: usize = 32;
+const STDIN_QUEUE: usize = 32;
 
 enum BufferSource {
   Mmap(Mmap),
@@ -140,11 +140,11 @@ impl Buffer {
   ///
   /// Returns an error if spawning the stdin reader thread fails.
   fn from_stdin() -> anyhow::Result<Self> {
-    let (data_tx, data_rx) = mpsc::sync_channel(STDIN_CHANNEL_CAPACITY);
-    let (vec_tx, vec_rx) = mpsc::sync_channel(STDIN_CHANNEL_CAPACITY);
+    let (data_tx, data_rx) = mpsc::sync_channel(STDIN_QUEUE);
+    let (vec_tx, vec_rx) = mpsc::sync_channel(STDIN_QUEUE);
     Self::spawn_stdin_reader(data_tx, vec_rx)?;
 
-    let mut data = Vec::with_capacity(STDIN_CHUNK_SIZE * 4);
+    let mut data = Vec::with_capacity(STDIN_CHUNK * 4);
     let mut active = true;
 
     match data_rx.recv_timeout(Duration::from_millis(10)) {
@@ -179,7 +179,7 @@ impl Buffer {
         let mut stdin = io::stdin().lock();
         loop {
           let mut chunk = vec_rx.try_recv().unwrap_or_default();
-          chunk.resize(STDIN_CHUNK_SIZE, 0);
+          chunk.resize(STDIN_CHUNK, 0);
           match stdin.read(&mut chunk) {
             Ok(0) => break, // EOF
             Ok(n) => {
@@ -278,6 +278,15 @@ impl Buffer {
   pub fn line_bytes(&self, line: usize) -> Option<&[u8]> {
     let line_range = self.line_range(line)?;
     self.source.get(line_range)
+  }
+
+  #[cfg(test)]
+  pub fn from_bytes(contents: &[u8]) -> Self {
+    Self {
+      source: BufferSource::Heap(contents.to_vec()),
+      line_offsets: Vec::new(),
+      scanned: 0,
+    }
   }
 }
 
