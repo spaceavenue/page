@@ -1,28 +1,12 @@
 # page
 
-A terminal pager written in Rust.
-
-Designed for near-instant startup and zero binary bloat.
-
----
-
-## Features
-
-- **Memory mapped file loading:** Files larger than 64 KiB are memory-mapped for near-instant loading.
-- **Lazy On-Demand Indexing:** Newlines are indexed on demand using SIMD-accelerated scanning. Lines are only scanned to fill the viewport, the remainder is indexed when scrolling or jumping to the bottom.
-- **Concurrent Streaming Stdin:** Piped input is ingested on a background thread in expanding chunks (8 KiB up to 256 KiB).
-- **Full ANSI & Truecolor Styling:** SGR parser supporting bold, dim, italic, underline, reverse video, 16 standard colors, 256-color palette, and 24-bit RGB truecolor. Active styling is tracked across wrapped screen rows.
-- **Unicode & Smart Word Wrapping:** Proper column width calculation (including CJK fullwidth characters and emoji). Supports soft (breaking on whitespace boundaries) and hard wrapping, as well as configurable tab stops.
-- **No-wrap mode with horizontal scrolling:** Disable wrapping. The left/right arrows move the visible column window.
-- **Line numbers and a help screen:** Aligned line-number gutter and a help screen to show keymap.
-
----
+A simple, modern terminal pager written in Rust.
 
 ## Installation
 
 ### Prerequisites
 
-- [Rust](https://www.rust-lang.org/tools/install) (2024 edition / stable toolchain)
+- [Rust](https://www.rust-lang.org/tools/install) (2024 edition)
 
 ### Building
 
@@ -31,22 +15,20 @@ Designed for near-instant startup and zero binary bloat.
 git clone https://github.com/spaceavenue/page.git
 cd page
 
-# Build an optimized release binary
+# Build a release binary
 cargo build --release
 
-# The compiled binary is located at target/release/page
-./target/release/page --help
+# Binary is accessible at ./target/release/page
+target/release/page --help
 ```
 
 ### Installing
 
-To install `page` directly into your `~/.cargo/bin` (or wherever `$CARGO_HOME` is):
+To install `page` directly into your `~/.cargo/bin` (or wherever `$CARGO_HOME/bin` is):
 
 ```bash
 cargo install --path .
 ```
-
----
 
 ## Usage
 
@@ -91,8 +73,6 @@ page --tab-width 4 source_code.rs
 | `--tab-width <N>` | `-t` | Number of columns between tab stops (1–256) | `8` |
 | `--help` | `-h` | Print help information | - |
 
----
-
 ## Keybinds
 
 | Key | Action | Description |
@@ -110,19 +90,22 @@ page --tab-width 4 source_code.rs
 | `h` / `?` | `Help` | Show the keymap |
 | `q` / `Esc` / `Ctrl-C` | `Quit` | Exit the pager |
 
----
-
 ## Testing
-
-The test suite is organized into the `tests` workspace member:
 
 ```bash
 cargo test
 ```
 
+## Features
+
+- **Full ANSI & Truecolor Styling:** SGR parser supporting bold, dim, italic, underline, reverse video, 16 standard colors, 256-color palette, and 24-bit RGB truecolor. Active styling is tracked across wrapped screen rows.
+- **Unicode & Smart Word Wrapping:** Proper column width calculation (including CJK fullwidth characters and emoji). Supports soft (breaking on whitespace boundaries) and hard wrapping, as well as configurable tab stops.
+- **No-wrap mode with horizontal scrolling:** Disable wrapping. The left/right arrows move the visible column window.
+- **Line numbers and a help screen:** Line numbers in the gutter and a help screen to show keymap.
+
 ---
 
-## Architecture Overview
+## Architecture
 
 - **`buffer`**: Owns data sources (memory-mapped files $\ge$ 64 KiB, heap buffer for small files, streaming background reader for `stdin`). Manages lazy newline index vectors.
 - **`text`**: Applies tab expansion, Unicode display widths, lazy row iteration, wrapping and styling, to create a `ParsedLine`.
@@ -133,8 +116,6 @@ cargo test
 - **`ui`**: Terminal alternate screen setup, viewport/layout math, theme colors and the status bar template.
 - **`config`**: CLI parsing, pager options and action keymap.
 - **`pager`**: Main terminal UI event loop driven by `crossterm`.
-
----
 
 ## License
 
