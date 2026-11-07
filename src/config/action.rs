@@ -14,50 +14,70 @@ pub enum Action {
   ScrollLeft,
   ScrollRight,
   ScrollHome,
+  SearchStart,
+  SearchStop,
+  SearchForward,
+  SearchBackward,
+  SearchMode,
   Help,
   Quit,
 }
 
+/// Defines a keymap as a slice of `(Action, &[(KeyModifiers, KeyCode)])`.
+///
+/// Each action lists any number of keys, separated by commas. A key is either a bare code or one or
+/// more modifiers joined with `|` followed by `+` and a code.
 macro_rules! keymap {
   (@key $c:literal) => { KeyCode::Char($c) };
   (@key $k:ident)   => { KeyCode::$k };
-  (@mods) => { KeyModifiers::NONE };
-  (@mods $($m:ident)|+) => { KeyModifiers::NONE $(.union(KeyModifiers::$m))+ };
+
+  // Key list muncher: accumulates `(mods, code),` pairs, then emits them as a slice.
+  (@keys [$($acc:tt)*]) => { &[$($acc)*] };
+  (@keys [$($acc:tt)*] $($m:ident)|+ + $c:tt $(, $($rest:tt)*)?) => {
+    keymap!(
+      @keys
+      [$($acc)* (KeyModifiers::NONE $(.union(KeyModifiers::$m))+, keymap!(@key $c)),]
+      $($($rest)*)?
+    )
+  };
+  (@keys [$($acc:tt)*] $c:tt $(, $($rest:tt)*)?) => {
+    keymap!(
+      @keys
+      [$($acc)* (KeyModifiers::NONE, keymap!(@key $c)),]
+      $($($rest)*)?
+    )
+  };
 
   (
     $vis:vis $name:ident:
-    $(
-      [$($code:tt),+ $(,)?] $(with $($m:ident)|+)? => $action:ident
-    ),+ $(,)?
+    $($action:ident => [$($keys:tt)*]),+ $(,)?
   ) => {
-    $vis const $name: &[(&[KeyCode], KeyModifiers, Action,)] = &[
-      $((
-        &[$(keymap! (@key $code)),+],
-        keymap! (@mods $($($m)|+)?),
-        Action::$action,
-      )),+
+    $vis const $name: &[(Action, &[(KeyModifiers, KeyCode)])] = &[
+      $((Action::$action, keymap!(@keys [] $($keys)*))),+
     ];
   };
 }
 
 keymap! {
     KEYMAP:
-    ['q', Esc]            => Quit,
-    ['c'] with CONTROL    => Quit,
-    [Up, 'k']             => LineUp,
-    [Down, 'j', Enter]    => LineDown,
-    [PageUp]              => PageUp,
-    ['b'] with CONTROL    => PageUp,
-    [PageDown, ' ']       => PageDown,
-    ['f'] with CONTROL    => PageDown,
-    ['u'] with CONTROL    => HalfPageUp,
-    ['d'] with CONTROL    => HalfPageDown,
-    ['g', Home]           => GotoTop,
-    ['G', End]            => GotoBottom,
-    [Left]                => ScrollLeft,
-    [Right]               => ScrollRight,
-    ['0']                 => ScrollHome,
-    ['h', '?']            => Help,
+    Quit           => ['q', Esc, CONTROL + 'c'],
+    LineUp         => [Up, 'k'],
+    LineDown       => [Down, 'j', Enter],
+    PageUp         => [PageUp, CONTROL + 'b'],
+    PageDown       => [PageDown, ' ', CONTROL + 'f'],
+    HalfPageUp     => [CONTROL + 'u'],
+    HalfPageDown   => [CONTROL + 'd'],
+    GotoTop        => ['g', Home],
+    GotoBottom     => ['G', End],
+    ScrollLeft     => [Left],
+    ScrollRight    => [Right],
+    ScrollHome     => ['0'],
+    SearchStart    => ['/', CONTROL + 'f'],
+    SearchStop     => [Esc, CONTROL + 'c'],
+    SearchForward  => ['n'],
+    SearchBackward => ['N'],
+    SearchMode     => ['M'],
+    Help           => ['h', '?'],
 }
 
 #[must_use]
@@ -71,6 +91,6 @@ pub fn action_for_key(key: KeyEvent) -> Option<Action> {
 
   KEYMAP
     .iter()
-    .find(|(codes, map_mods, _)| *map_mods == mods && codes.contains(&key.code))
-    .map(|(.., action)| *action)
+    .find(|(_, keys)| keys.contains(&(mods, key.code)))
+    .map(|(action, _)| *action)
 }
