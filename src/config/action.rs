@@ -15,10 +15,9 @@ pub enum Action {
   ScrollRight,
   ScrollHome,
   SearchStart,
-  SearchStop,
   SearchForward,
   SearchBackward,
-  SearchMode,
+  SearchModeToggle,
   Help,
   Quit,
 }
@@ -73,10 +72,9 @@ keymap! {
     ScrollRight    => [Right],
     ScrollHome     => ['0'],
     SearchStart    => ['/', CONTROL + 'f'],
-    SearchStop     => [Esc, CONTROL + 'c'],
     SearchForward  => ['n'],
     SearchBackward => ['N'],
-    SearchMode     => ['M'],
+    SearchModeToggle  => ['M'],
     Help           => ['h', '?'],
 }
 

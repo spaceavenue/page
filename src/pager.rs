@@ -1,8 +1,11 @@
 mod mode;
 mod render;
+mod search;
 
+use std::io::{BufWriter, Write};
 use std::time::Duration;
 
+use crossterm::event::KeyCode::{Backspace, Char, Enter, Esc};
 use crossterm::event::{Event, KeyEvent};
 use crossterm::{event, terminal};
 
@@ -10,11 +13,13 @@ use crate::buffer::Buffer;
 use crate::config::action::{Action, action_for_key};
 use crate::config::options::Options;
 use crate::pager::mode::Mode;
+use crate::pager::search::{SearchPrompt, SearchState};
 use crate::scroll::{self, Anchor};
+use crate::search::Matcher;
 use crate::text::{ParsedLine, WrapMode};
 use crate::ui::viewport::Viewport;
 
-const STREAM_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const STREAM_POLL_INTERVAL: Duration = Duration::from_millis(16);
 
 const HELP: &str = r"page-rs keys,
 
@@ -31,7 +36,6 @@ const HELP: &str = r"page-rs keys,
   q / Esc / C-c          quit
 ";
 
-#[allow(clippy::struct_excessive_bools)]
 pub struct Pager {
   buffer: Buffer,
   title: String,
@@ -43,6 +47,7 @@ pub struct Pager {
   left: usize,
   following: bool,
   opts: Options,
+  search_state: SearchState,
   parsed_buf: ParsedLine,
   status_buf: String,
 }
@@ -56,6 +61,7 @@ impl Pager {
   pub fn new(buffer: Buffer, title: String, options: Options) -> anyhow::Result<Self> {
     let (width, height) = terminal::size()?;
     let follow = options.initial_follow;
+    let search_state = SearchState::new(options.search_mode, options.case_sensitivity);
 
     let mut pager = Self {
       buffer,
@@ -68,6 +74,7 @@ impl Pager {
       left: 0,
       following: follow,
       opts: options,
+      search_state,
       parsed_buf: ParsedLine::default(),
       status_buf: String::new(),
     };
@@ -103,7 +110,7 @@ impl Pager {
   ///
   /// Returns an error if terminal rendering or input polling fails.
   pub fn run(&mut self) -> anyhow::Result<()> {
-    let mut stdout = std::io::stdout().lock();
+    let mut stdout = BufWriter::with_capacity(64 * 1024, std::io::stdout().lock());
 
     while self.running {
       let got_data = self.buffer.read_from_stdin()?;
@@ -116,6 +123,7 @@ impl Pager {
 
       if self.dirty {
         self.render(&mut stdout)?;
+        stdout.flush()?;
         self.clean();
       }
 
@@ -129,12 +137,10 @@ impl Pager {
 
   fn handle_event(&mut self, event: Event) {
     match event {
-      Event::Key(key_event) => {
-        let mode = std::mem::replace(&mut self.mode, Mode::Normal);
-        match mode {
-          Mode::Normal => self.handle_normal_key(key_event),
-          Mode::Help => self.handle_help_key(key_event),
-        }
+      Event::Key(key_event) => match &mut self.mode {
+        Mode::Normal => self.handle_normal_key(key_event),
+        Mode::Help => self.handle_help_key(key_event),
+        Mode::Search(_) => self.handle_search_key(key_event),
       },
       Event::Resize(width, height) => {
         self.viewport = Viewport::new(usize::from(width), usize::from(height));
@@ -163,10 +169,39 @@ impl Pager {
     self.dirty();
   }
 
+  fn handle_search_key(&mut self, key_event: KeyEvent) {
+    let Mode::Search(prompt) = &mut self.mode else {
+      return;
+    };
+    match key_event.code {
+      Esc => self.mode = Mode::Normal,
+      Char(c) => prompt.query.push(c),
+      Backspace => {
+        prompt.query.pop();
+      },
+      Enter => match Matcher::with_values(
+        &prompt.query,
+        self.search_state.mode,
+        self.search_state.case_sensitivity,
+      ) {
+        Ok(m) => {
+          self.search_state.matcher = Some(m);
+          self.search_state.cursor = None;
+          self.search_next();
+          self.mode = Mode::Normal;
+        },
+        Err(e) => prompt.error = Some(e),
+      },
+      _ => {},
+    }
+    self.dirty();
+  }
+
   fn dispatch(&mut self, action: Action) {
     use Action::{
       GotoBottom, GotoTop, HalfPageDown, HalfPageUp, Help, LineDown, LineUp, PageDown, PageUp,
-      Quit, ScrollHome, ScrollLeft, ScrollRight,
+      Quit, ScrollHome, ScrollLeft, ScrollRight, SearchBackward, SearchForward, SearchModeToggle,
+      SearchStart,
     };
 
     let body = self.viewport.body_height();
@@ -188,6 +223,20 @@ impl Pager {
       ScrollHome => self.left = 0,
       Help => self.mode = Mode::Help,
       Quit => self.running = false,
+      SearchStart => {
+        let prompt = SearchPrompt::default();
+        self.mode = Mode::Search(prompt);
+      },
+      SearchForward => {
+        self.search_next();
+      },
+      SearchBackward => {
+        self.search_prev();
+      },
+      SearchModeToggle => {
+        // TODO: surface the error.
+        let _ = self.toggle_search_mode();
+      },
     }
     self.dirty();
   }
@@ -305,3 +354,6 @@ impl Pager {
     }
   }
 }
+
+#[cfg(test)]
+mod tests;

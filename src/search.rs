@@ -60,21 +60,36 @@ pub enum SearchDirection {
   Backward,
 }
 
-impl SearchDirection {
-  /// Reverse the search direction.
-  #[must_use]
-  pub const fn reverse(self) -> Self {
-    match self {
-      Self::Forward => Self::Backward,
-      Self::Backward => Self::Forward,
-    }
-  }
-}
-
 #[derive(Clone, Debug)]
 enum Kind {
   Substring(Vec<u8>),
   Regex(Regex),
+}
+
+impl Kind {
+  fn with_values(
+    query: &str,
+    mode: SearchMode,
+    case_sensitivity: CaseSensitivity,
+  ) -> Result<Self, SearchError> {
+    let is_case_insensitive = case_sensitivity.is_case_insensitive(query);
+    let kind = match mode {
+      SearchMode::Substring if is_case_insensitive => {
+        let regex = RegexBuilder::new(&regex::escape(query))
+          .case_insensitive(true)
+          .build()?;
+        Self::Regex(regex)
+      },
+      SearchMode::Substring => Self::Substring(query.as_bytes().to_vec()),
+      SearchMode::Regex => {
+        let regex = RegexBuilder::new(query)
+          .case_insensitive(is_case_insensitive)
+          .build()?;
+        Self::Regex(regex)
+      },
+    };
+    Ok(kind)
+  }
 }
 
 /// A match in a line.
@@ -96,52 +111,53 @@ pub struct Matcher {
 }
 
 impl Matcher {
-  /// Compile a `query` using `mode` with default case sensitivity.
+  /// Compile a `query` with default search mode and case sensitivity.
   ///
   /// # Errors
   ///
   /// Returns a [`SearchError`] for an empty or invalid query.
-  pub fn new(query: &str, mode: SearchMode) -> Result<Self, SearchError> {
-    Self::with_case(query, mode, CaseSensitivity::default())
+  pub fn new(query: &str) -> Result<Self, SearchError> {
+    if query.is_empty() {
+      return Err(SearchError::empty());
+    }
+    let kind = Kind::with_values(query, SearchMode::default(), CaseSensitivity::default())?;
+    Ok(Self {
+      query: query.to_string(),
+      mode: SearchMode::default(),
+      case_sensitivity: CaseSensitivity::default(),
+      kind,
+    })
   }
 
-  /// Compile a `query` using `mode` with given `case_sensitivity`.
-  ///
-  /// # Errors
-  ///
-  /// Returns a [`SearchError`] for an empty or invalid query.
-  pub fn with_case(
+  pub fn with_values(
     query: &str,
     mode: SearchMode,
     case_sensitivity: CaseSensitivity,
   ) -> Result<Self, SearchError> {
-    if query.is_empty() {
-      return Err(SearchError::empty());
-    }
-
-    let is_case_insensitive = case_sensitivity.is_case_insensitive(query);
-    let kind = match mode {
-      SearchMode::Substring if is_case_insensitive => {
-        let regex = RegexBuilder::new(&regex::escape(query))
-          .case_insensitive(true)
-          .build()?;
-        Kind::Regex(regex)
-      },
-      SearchMode::Substring => Kind::Substring(query.as_bytes().to_vec()),
-      SearchMode::Regex => {
-        let regex = RegexBuilder::new(query)
-          .case_insensitive(is_case_insensitive)
-          .build()?;
-        Kind::Regex(regex)
-      },
-    };
-
+    let kind = Kind::with_values(query, mode, case_sensitivity)?;
     Ok(Self {
       query: query.to_string(),
       mode,
       case_sensitivity,
       kind,
     })
+  }
+
+  /// Re-compile a matcher with given `case_sensitivity`.
+  pub fn with_case(&mut self, case_sensitivity: CaseSensitivity) -> Result<(), SearchError> {
+    if self.query.is_empty() {
+      return Err(SearchError::empty());
+    }
+    self.kind = Kind::with_values(&self.query, self.mode, case_sensitivity)?;
+    self.case_sensitivity = case_sensitivity;
+    Ok(())
+  }
+
+  /// Re-compile a matcher with the given `mode`.
+  pub fn with_mode(&mut self, mode: SearchMode) -> Result<(), SearchError> {
+    self.kind = Kind::with_values(&self.query, mode, self.case_sensitivity)?;
+    self.mode = mode;
+    Ok(())
   }
 
   /// The original query text.
@@ -333,15 +349,21 @@ mod tests {
 
   #[test]
   fn query_validation() {
-    assert!(Matcher::new("", SearchMode::Substring).is_err());
-    assert!(Matcher::new("", SearchMode::Regex).is_err());
-    let err = Matcher::new("[invalid", SearchMode::Regex).unwrap_err();
+    assert!(
+      Matcher::new("")
+        .map(|mut m| m.with_mode(SearchMode::Substring))
+        .is_err()
+    );
+    assert!(Matcher::with_values("", SearchMode::Regex, CaseSensitivity::default()).is_err());
+    let err =
+      Matcher::with_values("[invalid", SearchMode::Regex, CaseSensitivity::default()).unwrap_err();
     assert!(err.message().contains("invalid regex"));
   }
 
   #[test]
   fn matching_find_rfind_and_smart_case() {
-    let sub = Matcher::new("test", SearchMode::Substring).unwrap();
+    let sub =
+      Matcher::with_values("test", SearchMode::Substring, CaseSensitivity::default()).unwrap();
     let text = "test 123 test 456 test";
     assert_eq!(sub.find(text, 13), Some(18..22));
     assert_eq!(sub.rfind(text, 18), Some(9..13));
@@ -355,23 +377,27 @@ mod tests {
     );
 
     // Smart-case: lowercase query matches case-insensitively
-    let smart = Matcher::new("hello", SearchMode::Substring).unwrap();
+    let smart =
+      Matcher::with_values("hello", SearchMode::Substring, CaseSensitivity::default()).unwrap();
     assert!(smart.is_case_insensitive());
     assert_eq!(smart.find("Hello HELLO", 0), Some(0..5));
 
     // Smart-case: uppercase query matches case-sensitively
-    let exact = Matcher::new("Hello", SearchMode::Substring).unwrap();
+    let exact =
+      Matcher::with_values("Hello", SearchMode::Substring, CaseSensitivity::default()).unwrap();
     assert!(!exact.is_case_insensitive());
     assert_eq!(exact.find("hello HELLO", 0), None);
 
     // Regex smart-case
-    let re = Matcher::new(r"err\w+", SearchMode::Regex).unwrap();
+    let re =
+      Matcher::with_values(r"err\w+", SearchMode::Regex, CaseSensitivity::default()).unwrap();
     assert_eq!(re.find("ERROR occurred", 0), Some(0..5));
   }
 
   #[test]
   fn find_iter_matches() {
-    let matcher = Matcher::new("aa", SearchMode::Substring).unwrap();
+    let matcher =
+      Matcher::with_values("aa", SearchMode::Substring, CaseSensitivity::default()).unwrap();
     let text = "aaaa aa";
     let hits: Vec<Range<usize>> = matcher.find_iter(text).collect();
     assert_eq!(hits, vec![0..2, 2..4, 5..7]);

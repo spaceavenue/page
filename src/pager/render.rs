@@ -7,7 +7,10 @@ use crossterm::terminal::{Clear, ClearType};
 
 use super::mode::Mode;
 use super::{HELP, Pager};
+use crate::config::options::Options;
+use crate::pager::search::{SearchPrompt, SearchState};
 use crate::text::WrapMode;
+use crate::ui::viewport::Viewport;
 use crate::ui::{BarContent, StatusContext};
 
 impl Pager {
@@ -18,11 +21,22 @@ impl Pager {
   /// Returns an error if terminal output fails or a coordinate cannot be
   /// represented as a `u16`.
   pub fn render(&mut self, out: &mut impl io::Write) -> anyhow::Result<()> {
-    if matches!(&self.mode, Mode::Help) {
-      self.render_help(out)?;
-      out.flush()?;
-      return Ok(());
+    // need to destructure here to keep borrow checker happy...
+    let Self {
+      opts,
+      status_buf,
+      viewport,
+      search_state,
+      ..
+    } = self;
+    match &self.mode {
+      Mode::Normal => self.render_normal(out),
+      Mode::Help => self.render_help(out),
+      Mode::Search(prompt) => render_search(out, opts, viewport, status_buf, search_state, prompt),
     }
+  }
+
+  fn render_normal(&mut self, out: &mut impl io::Write) -> anyhow::Result<()> {
     self
       .buffer
       .index_till_line(self.viewport.bottom_line(self.top.line));
@@ -99,7 +113,6 @@ impl Pager {
     }
 
     self.render_status(out)?;
-    out.flush()?;
     Ok(())
   }
 
@@ -156,7 +169,6 @@ impl Pager {
 
     let context = StatusContext::new(title, lines, percent, reading);
     let status_row = u16::try_from(self.viewport.last_row())?;
-
     self.opts.ui.render_bar(
       out,
       status_row,
@@ -165,4 +177,26 @@ impl Pager {
       &mut self.status_buf,
     )
   }
+}
+
+fn render_search(
+  out: &mut impl io::Write,
+  opts: &Options,
+  viewport: &Viewport,
+  status_buf: &mut String,
+  search_state: &SearchState,
+  prompt: &SearchPrompt,
+) -> anyhow::Result<()> {
+  status_buf.clear();
+  let mode = search_state.mode.label();
+  let query = prompt.query.as_str();
+  let content = format!("{mode} / {query}|");
+  let footer_row = u16::try_from(viewport.last_row())?;
+  opts.ui.render_bar(
+    out,
+    footer_row,
+    viewport.width(),
+    &BarContent::Message(&content),
+    status_buf,
+  )
 }

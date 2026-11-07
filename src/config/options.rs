@@ -1,5 +1,6 @@
 use std::num::NonZeroUsize;
 
+use crate::search::{CaseSensitivity, SearchMode};
 use crate::text::WrapMode;
 use crate::ui::Ui;
 
@@ -16,6 +17,10 @@ pub struct Options {
   pub tab_width: NonZeroUsize,
   /// Show a line-number gutter (default = false).
   pub line_numbers: bool,
+  /// Initial search mode (default = substring).
+  pub search_mode: SearchMode,
+  /// Initial case case sensitivity of searches (default = Smart Case)
+  pub case_sensitivity: CaseSensitivity,
   /// Pager colors and status bar config.
   pub ui: Ui,
 }
@@ -28,6 +33,8 @@ impl Default for Options {
       true,
       NonZeroUsize::new(8).unwrap_or(NonZeroUsize::MIN),
       false,
+      SearchMode::default(),
+      CaseSensitivity::default(),
       Ui::default(),
     )
   }
@@ -36,12 +43,15 @@ impl Default for Options {
 impl Options {
   /// Create pager options with the given settings.
   #[must_use]
+  #[allow(clippy::too_many_arguments)]
   pub const fn new(
     initial_follow: bool,
     wrap: WrapMode,
     ansi: bool,
     tab_width: NonZeroUsize,
     line_numbers: bool,
+    search_mode: SearchMode,
+    case_sensitivity: CaseSensitivity,
     ui: Ui,
   ) -> Self {
     Self {
@@ -50,6 +60,8 @@ impl Options {
       ansi,
       tab_width,
       line_numbers,
+      search_mode,
+      case_sensitivity,
       ui,
     }
   }
