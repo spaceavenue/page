@@ -5,7 +5,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::text::reader::Reader;
 
-const DEFAULT_TEMPLATE: &str = "{filename} {lines}{plus} lines {percent}% {state}";
+const DEFAULT_TEMPLATE: &str = "{filename} {lines}{plus} lines {percent}% {state} {notice}";
 
 /// Values available to the status-bar template.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -14,16 +14,24 @@ pub struct StatusContext<'a> {
   pub lines: usize,
   pub percent: usize,
   pub reading: bool,
+  pub notice: &'a str,
 }
 
 impl<'a> StatusContext<'a> {
   #[must_use]
-  pub const fn new(filename: &'a str, lines: usize, percent: usize, reading: bool) -> Self {
+  pub const fn new(
+    filename: &'a str,
+    lines: usize,
+    percent: usize,
+    reading: bool,
+    notice: &'a str,
+  ) -> Self {
     Self {
       filename,
       lines,
       percent,
       reading,
+      notice,
     }
   }
 }
@@ -71,6 +79,7 @@ define_tokens! {
     Plus => "plus" => if ctx.reading {"+"} else {""},
     Percent => "percent" =>  ctx.percent,
     State => "state" => if ctx.reading {"[reading...]"} else {""},
+    Notice => "notice" => ctx.notice,
   }
 }
 

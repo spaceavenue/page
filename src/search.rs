@@ -117,16 +117,7 @@ impl Matcher {
   ///
   /// Returns a [`SearchError`] for an empty or invalid query.
   pub fn new(query: &str) -> Result<Self, SearchError> {
-    if query.is_empty() {
-      return Err(SearchError::empty());
-    }
-    let kind = Kind::with_values(query, SearchMode::default(), CaseSensitivity::default())?;
-    Ok(Self {
-      query: query.to_string(),
-      mode: SearchMode::default(),
-      case_sensitivity: CaseSensitivity::default(),
-      kind,
-    })
+    Self::with_values(query, SearchMode::default(), CaseSensitivity::default())
   }
 
   pub fn with_values(
@@ -134,6 +125,9 @@ impl Matcher {
     mode: SearchMode,
     case_sensitivity: CaseSensitivity,
   ) -> Result<Self, SearchError> {
+    if query.is_empty() {
+      return Err(SearchError::empty());
+    }
     let kind = Kind::with_values(query, mode, case_sensitivity)?;
     Ok(Self {
       query: query.to_string(),

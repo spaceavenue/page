@@ -30,12 +30,31 @@ pub struct SearchCursor {
   pub top: Anchor,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchOutcome {
+  NoMatcher,
+  Found,
+  NotFound,
+  Wrapped,
+}
+
+impl SearchOutcome {
+  pub const fn label(self) -> &'static str {
+    match self {
+      Self::Found | Self::NoMatcher => "",
+      Self::NotFound => "[search]: no match found",
+      Self::Wrapped => "[search]: wrapped around document",
+    }
+  }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SearchState {
   pub matcher: Option<Matcher>,
   pub mode: SearchMode,
   pub case_sensitivity: CaseSensitivity,
   pub cursor: Option<SearchCursor>,
+  pub notice: Option<(SearchOutcome, Anchor)>,
 }
 
 impl SearchState {
@@ -77,17 +96,24 @@ impl Pager {
     };
     if let Some(matcher) = self.search_state.matcher.as_mut() {
       matcher.with_mode(mode)?;
-      // The old snapshots mean nothing to us.
+      // The old snapshots and notice mean nothing to us.
       self.search_state.cursor = None;
+      self.search_state.notice = None;
     }
     self.search_state.mode = mode;
     Ok(())
   }
 
+  fn search(&mut self, direction: SearchDirection) -> SearchOutcome {
+    let outcome = self.find_and_jump(direction);
+    self.search_state.notice = Some((outcome, self.top));
+    outcome
+  }
+
   /// Find and jump to the next or previous match in the document according to `direction`.
-  fn search(&mut self, direction: SearchDirection) -> bool {
+  fn find_and_jump(&mut self, direction: SearchDirection) -> SearchOutcome {
     let Some(matcher) = self.search_state.matcher.as_ref() else {
-      return false;
+      return SearchOutcome::NoMatcher;
     };
 
     // only continue from the last hit while the screen is exactly where that jump left it.
@@ -132,19 +158,23 @@ impl Pager {
         SearchDirection::Backward => find_prev(total_lines, start_line, start_col, check_line),
       }
     }) else {
-      return false;
+      return SearchOutcome::NotFound;
     };
+    let wrapped = has_wrapped(&hit, (start_line, start_col), direction);
     self.jump_to_match(hit);
-    true
+    if wrapped {
+      return SearchOutcome::Wrapped;
+    }
+    SearchOutcome::Found
   }
 
   /// Find and jump to the next match.
-  pub fn search_next(&mut self) -> bool {
+  pub fn search_next(&mut self) -> SearchOutcome {
     self.search(SearchDirection::Forward)
   }
 
   /// Find and jump to the previous match.
-  pub fn search_prev(&mut self) -> bool {
+  pub fn search_prev(&mut self) -> SearchOutcome {
     self.search(SearchDirection::Backward)
   }
 
@@ -268,6 +298,14 @@ where
       LineSearchRes::Match(range) => Some(SearchHit { line, range }),
       _ => None,
     })
+}
+
+fn has_wrapped(hit: &SearchHit, start: (usize, usize), direction: SearchDirection) -> bool {
+  let pos = (hit.line, hit.range.start);
+  match direction {
+    SearchDirection::Forward => pos < start,
+    SearchDirection::Backward => pos >= start,
+  }
 }
 
 /// Find the next match in a document using a line-match closure.

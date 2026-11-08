@@ -2,7 +2,7 @@ pub mod status;
 pub mod terminal;
 pub mod viewport;
 
-use std::fmt;
+use std::fmt::{self};
 use std::io::Write;
 
 use crossterm::cursor::MoveTo;
@@ -18,6 +18,8 @@ pub use self::status::{StatusContext, StatusTemplate};
 pub enum BarContent<'a> {
   Status(&'a StatusContext<'a>),
   Message(&'a str),
+  // for stuff that isnt a static str
+  Fmt(fmt::Arguments<'a>),
 }
 
 /// Clamps text to a display-column width, replaces controls, and pads spaces.
@@ -86,6 +88,7 @@ impl Ui {
     match content {
       BarContent::Status(ctx) => self.status.render(ctx, buf)?,
       BarContent::Message(msg) => buf.push_str(msg),
+      BarContent::Fmt(args) => fmt::Write::write_fmt(&mut *buf, *args)?,
     }
     queue!(
       out,

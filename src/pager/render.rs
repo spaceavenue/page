@@ -7,10 +7,8 @@ use crossterm::terminal::{Clear, ClearType};
 
 use super::mode::Mode;
 use super::{HELP, Pager};
-use crate::config::options::Options;
-use crate::pager::search::{SearchPrompt, SearchState};
+use crate::search::SearchError;
 use crate::text::WrapMode;
-use crate::ui::viewport::Viewport;
 use crate::ui::{BarContent, StatusContext};
 
 impl Pager {
@@ -22,17 +20,10 @@ impl Pager {
   /// represented as a `u16`.
   pub fn render(&mut self, out: &mut impl io::Write) -> anyhow::Result<()> {
     // need to destructure here to keep borrow checker happy...
-    let Self {
-      opts,
-      status_buf,
-      viewport,
-      search_state,
-      ..
-    } = self;
     match &self.mode {
       Mode::Normal => self.render_normal(out),
       Mode::Help => self.render_help(out),
-      Mode::Search(prompt) => render_search(out, opts, viewport, status_buf, search_state, prompt),
+      Mode::Search(_) => self.render_search(out),
     }
   }
 
@@ -166,8 +157,13 @@ impl Pager {
     let lines = self.buffer.line_count();
     let reading = self.buffer.is_streaming();
     let percent = self.viewport.percent(self.top.line, lines);
+    let notice = self
+      .search_state
+      .notice
+      .filter(|(_, top)| *top == self.top)
+      .map_or("", |(outcome, _)| outcome.label());
 
-    let context = StatusContext::new(title, lines, percent, reading);
+    let context = StatusContext::new(title, lines, percent, reading, notice);
     let status_row = u16::try_from(self.viewport.last_row())?;
     self.opts.ui.render_bar(
       out,
@@ -177,26 +173,22 @@ impl Pager {
       &mut self.status_buf,
     )
   }
-}
 
-fn render_search(
-  out: &mut impl io::Write,
-  opts: &Options,
-  viewport: &Viewport,
-  status_buf: &mut String,
-  search_state: &SearchState,
-  prompt: &SearchPrompt,
-) -> anyhow::Result<()> {
-  status_buf.clear();
-  let mode = search_state.mode.label();
-  let query = prompt.query.as_str();
-  let content = format!("{mode} / {query}|");
-  let footer_row = u16::try_from(viewport.last_row())?;
-  opts.ui.render_bar(
-    out,
-    footer_row,
-    viewport.width(),
-    &BarContent::Message(&content),
-    status_buf,
-  )
+  fn render_search(&mut self, out: &mut impl io::Write) -> anyhow::Result<()> {
+    let Mode::Search(prompt) = &self.mode else {
+      return Ok(());
+    };
+    self.status_buf.clear();
+    let mode = self.search_state.mode.label();
+    let query = prompt.query.as_str();
+    let error = prompt.error.as_ref().map_or("", SearchError::message);
+    let footer_row = u16::try_from(self.viewport.last_row())?;
+    self.opts.ui.render_bar(
+      out,
+      footer_row,
+      self.viewport.width(),
+      &BarContent::Fmt(format_args!("{mode} / {query}| {error}")),
+      &mut self.status_buf,
+    )
+  }
 }

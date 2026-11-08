@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
+use super::search::SearchOutcome::{self, Found, NoMatcher, NotFound, Wrapped};
 use super::*;
 use crate::search::SearchMode;
 
@@ -43,29 +44,33 @@ const fn at(line: usize, row: usize) -> Anchor {
   Anchor { line, row }
 }
 
+fn notice(pager: &Pager) -> Option<SearchOutcome> {
+  pager.search_state.notice.map(|(outcome, _)| outcome)
+}
+
 #[test]
 fn document_navigation_and_wrap_around() {
   let doc = "line 0\nline 1 target A\nline 2\nline 3 target B\n";
   let mut pager = test_pager(doc, 80, 2);
   set_query(&mut pager, "target");
 
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   assert_eq!(pager.last_match().unwrap().line, 1);
   assert_eq!(pager.top.line, 1);
 
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   assert_eq!(pager.last_match().unwrap().line, 3);
   assert_eq!(pager.top.line, 3);
 
   // wrap forward -> first match
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Wrapped);
   assert_eq!(pager.last_match().unwrap().line, 1);
 
   // wrap backward -> last match
-  assert!(pager.search_prev());
+  assert_eq!(pager.search_prev(), Wrapped);
   assert_eq!(pager.last_match().unwrap().line, 3);
 
-  assert!(pager.search_prev());
+  assert_eq!(pager.search_prev(), Found);
   assert_eq!(pager.last_match().unwrap().line, 1);
 }
 
@@ -74,29 +79,44 @@ fn intra_line_multiple_matches() {
   let mut pager = test_pager("first target and second target\n", 80, 2);
   set_query(&mut pager, "target");
 
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   assert_eq!(pager.last_match().unwrap().range, 6..12);
 
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   assert_eq!(pager.last_match().unwrap().range, 24..30);
 
   // wraps back to the first match on the same line
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Wrapped);
   assert_eq!(pager.last_match().unwrap().range, 6..12);
 
-  assert!(pager.search_prev());
+  assert_eq!(pager.search_prev(), Wrapped);
   assert_eq!(pager.last_match().unwrap().range, 24..30);
+}
+
+#[test]
+fn only_match_reports_wrapped() {
+  let mut pager = test_pager("nothing\nthe only target\nnothing\n", 80, 2);
+  set_query(&mut pager, "target");
+
+  // the first search cannot know the match is the only one
+  assert_eq!(pager.search_next(), Found);
+  let hit = pager.last_match().unwrap().clone();
+
+  assert_eq!(pager.search_next(), Wrapped);
+  assert_eq!(pager.last_match().unwrap(), &hit);
+  assert_eq!(pager.search_prev(), Wrapped);
+  assert_eq!(pager.last_match().unwrap(), &hit);
 }
 
 #[test]
 fn missing_or_uninitialized_search() {
   let mut pager = test_pager("hello world\n", 80, 2);
-  assert!(!pager.search_next());
-  assert!(!pager.search_prev());
+  assert_eq!(pager.search_next(), NoMatcher);
+  assert_eq!(pager.search_prev(), NoMatcher);
 
   set_query(&mut pager, "missing");
-  assert!(!pager.search_next());
-  assert!(!pager.search_prev());
+  assert_eq!(pager.search_next(), NotFound);
+  assert_eq!(pager.search_prev(), NotFound);
   assert_eq!(pager.top, Anchor::default());
   assert!(pager.last_match().is_none());
 }
@@ -108,12 +128,12 @@ fn finds_matches_below_viewport() {
   let mut pager = test_pager(&doc, 80, 24);
   set_query(&mut pager, "needle");
 
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   assert_eq!(pager.last_match().unwrap().line, 1000);
 
-  // and back up again
+  // and back up again: from the top of the document, backward search wraps to the end
   pager.top = Anchor::default();
-  assert!(pager.search_prev());
+  assert_eq!(pager.search_prev(), Wrapped);
   assert_eq!(pager.last_match().unwrap().line, 1000);
 }
 
@@ -123,12 +143,12 @@ fn visible_match_does_not_scroll() {
   let mut pager = test_pager(&doc, 80, 6); // 5 body rows
   set_query(&mut pager, "target");
 
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   assert_eq!(pager.last_match().unwrap().line, 1);
   assert_eq!(pager.top, Anchor::default());
 
   // the cursor must still advance even though the screen did not move
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   assert_eq!(pager.last_match().unwrap().line, 3);
   assert_eq!(pager.top, Anchor::default());
 }
@@ -139,7 +159,7 @@ fn hidden_match_scrolls_margin() {
   let mut pager = test_pager(&doc, 80, 11); // 10 body rows
   set_query(&mut pager, "target");
 
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   assert_eq!(pager.last_match().unwrap().line, 50);
   assert_eq!(pager.top, at(48, 0));
 }
@@ -150,7 +170,7 @@ fn margin_shrinks_in_small_viewports() {
   let mut pager = test_pager(&doc, 80, 2); // 1 body row
   set_query(&mut pager, "target");
 
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   assert_eq!(pager.top, at(50, 0));
 }
 
@@ -160,15 +180,68 @@ fn scrolling_away_discards_search_cursor() {
   let mut pager = test_pager(&doc, 80, 6);
   set_query(&mut pager, "target");
 
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   assert_eq!(pager.last_match().unwrap().line, 1);
 
   // Scroll past the match. Searching backward must start from the new screen and find line 1
   // again. A stale cursor would continue from line 1 and wrap around to line 20.
   pager.scroll_by(false, 10);
   assert_eq!(pager.top.line, 10);
-  assert!(pager.search_prev());
+  assert_eq!(pager.search_prev(), Found);
   assert_eq!(pager.last_match().unwrap().line, 1);
+}
+
+#[test]
+fn wrapping_scrolls_and_moves_cursor() {
+  let doc = numbered_doc(100, &[1, 50], " target");
+  let mut pager = test_pager(&doc, 80, 11); // 10 body rows
+  set_query(&mut pager, "target");
+
+  assert_eq!(pager.search_next(), Found);
+  assert_eq!(pager.search_next(), Found);
+  assert_eq!(pager.last_match().unwrap().line, 50);
+  assert_eq!(pager.top, at(48, 0));
+
+  // line 1 is off screen: the wrap has to scroll back up to it
+  assert_eq!(pager.search_next(), Wrapped);
+  assert_eq!(pager.last_match().unwrap().line, 1);
+  assert_eq!(pager.top, Anchor::default());
+
+  // and the cursor moved with it, so the next search continues forward instead of wrapping again
+  assert_eq!(pager.search_next(), Found);
+  assert_eq!(pager.last_match().unwrap().line, 50);
+}
+
+#[test]
+fn notice_follows_outcome_and_expires_on_scroll() {
+  let doc = numbered_doc(40, &[1], " target");
+  let mut pager = test_pager(&doc, 80, 6);
+  assert_eq!(notice(&pager), None);
+
+  set_query(&mut pager, "target");
+  assert_eq!(pager.search_next(), Found);
+  assert_eq!(pager.search_state.notice, Some((Found, pager.top)));
+
+  // wrapping onto the same match: the notice must be stamped after the jump
+  assert_eq!(pager.search_next(), Wrapped);
+  assert_eq!(pager.search_state.notice, Some((Wrapped, pager.top)));
+
+  // moving the screen leaves the notice behind: render shows it only while the anchor matches
+  pager.scroll_by(false, 3);
+  assert_ne!(
+    pager.search_state.notice.map(|(_, top)| top),
+    Some(pager.top)
+  );
+
+  set_query(&mut pager, "missing");
+  assert_eq!(pager.search_next(), NotFound);
+  assert_eq!(pager.search_state.notice, Some((NotFound, pager.top)));
+
+  // a successful toggle invalidates the old notice
+  set_query(&mut pager, "target");
+  assert_eq!(pager.search_next(), Wrapped);
+  pager.toggle_search_mode().unwrap();
+  assert_eq!(notice(&pager), None);
 }
 
 #[test]
@@ -182,7 +255,7 @@ fn wrapped_match_fully_visible() {
   pager.opts.wrap = WrapMode::Hard;
   set_query(&mut pager, "needle");
 
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   let hit = pager.last_match().unwrap().clone();
   assert_eq!((hit.line, hit.range), (20, 15..21));
 
@@ -200,7 +273,7 @@ fn match_taller_than_screen_shows_first_row() {
   pager.opts.wrap = WrapMode::Hard;
   set_query(&mut pager, "needle");
 
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   assert_eq!(pager.top, at(20, 1));
 }
 
@@ -211,13 +284,13 @@ fn nowrap_scrolls_horizontally_to_match() {
   pager.opts.wrap = WrapMode::None;
   set_query(&mut pager, "needle");
 
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   // columns 50..56 with a 7 column margin: the window is 43..63
   assert_eq!(pager.left, 43);
 
   // already fully visible: stays put
   pager.search_state.cursor = None;
-  assert!(pager.search_next());
+  assert_eq!(pager.search_next(), Found);
   assert_eq!(pager.left, 43);
 }
 
