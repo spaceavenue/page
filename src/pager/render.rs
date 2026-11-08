@@ -1,6 +1,6 @@
-use std::io;
+use std::io::{self};
 
-use crossterm::cursor::MoveTo;
+use crossterm::cursor::{MoveTo, SetCursorStyle};
 use crossterm::queue;
 use crossterm::style::{Print, ResetColor, SetForegroundColor};
 use crossterm::terminal::{Clear, ClearType};
@@ -9,7 +9,10 @@ use super::mode::Mode;
 use super::{HELP, Pager};
 use crate::search::SearchError;
 use crate::text::WrapMode;
-use crate::ui::{BarContent, StatusContext};
+use crate::ui::{BarContent, StatusContext, display_width};
+
+const SEP: &str = "/";
+const SPACE_LEN: usize = 2;
 
 impl Pager {
   /// Render the current frame to `out`.
@@ -149,7 +152,9 @@ impl Pager {
       self.viewport.width(),
       &BarContent::Message("Press any key to close."),
       &mut self.status_buf,
-    )
+    )?;
+    hide_cursor(out)?;
+    Ok(())
   }
 
   fn render_status(&mut self, out: &mut impl io::Write) -> anyhow::Result<()> {
@@ -160,8 +165,8 @@ impl Pager {
     let notice = self
       .search_state
       .notice
-      .filter(|(_, top)| *top == self.top)
-      .map_or("", |(outcome, _)| outcome.label());
+      .filter(|n| n.top == self.top)
+      .map_or("", |n| n.outcome.label());
 
     let context = StatusContext::new(title, lines, percent, reading, notice);
     let status_row = u16::try_from(self.viewport.last_row())?;
@@ -171,24 +176,53 @@ impl Pager {
       self.viewport.width(),
       &BarContent::Status(&context),
       &mut self.status_buf,
-    )
+    )?;
+    hide_cursor(out)?;
+    Ok(())
   }
 
   fn render_search(&mut self, out: &mut impl io::Write) -> anyhow::Result<()> {
     let Mode::Search(prompt) = &self.mode else {
       return Ok(());
     };
-    self.status_buf.clear();
+
     let mode = self.search_state.mode.label();
-    let query = prompt.query.as_str();
+    let query = prompt.query();
     let error = prompt.error.as_ref().map_or("", SearchError::message);
+
+    let prefix_len = mode.len() + SEP.len() + SPACE_LEN;
+    let prompt_len = display_width(prompt.before_cursor());
+    let width = (prefix_len + prompt_len).min(self.viewport.width().saturating_sub(1));
+    let col = u16::try_from(width)?;
     let footer_row = u16::try_from(self.viewport.last_row())?;
+
     self.opts.ui.render_bar(
       out,
       footer_row,
       self.viewport.width(),
-      &BarContent::Fmt(format_args!("{mode} / {query}| {error}")),
+      &BarContent::Fmt(format_args!("{mode} {SEP} {query} {error}")),
       &mut self.status_buf,
-    )
+    )?;
+    show_cursor(out, col, footer_row)?;
+    Ok(())
   }
+}
+
+fn hide_cursor(out: &mut impl io::Write) -> anyhow::Result<()> {
+  queue!(
+    out,
+    SetCursorStyle::DefaultUserShape,
+    crossterm::cursor::Hide
+  )?;
+  Ok(())
+}
+
+fn show_cursor(out: &mut impl io::Write, col: u16, row: u16) -> anyhow::Result<()> {
+  queue!(
+    out,
+    SetCursorStyle::BlinkingUnderScore,
+    MoveTo(col, row),
+    crossterm::cursor::Show,
+  )?;
+  Ok(())
 }

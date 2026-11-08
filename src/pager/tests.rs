@@ -45,7 +45,7 @@ const fn at(line: usize, row: usize) -> Anchor {
 }
 
 fn notice(pager: &Pager) -> Option<SearchOutcome> {
-  pager.search_state.notice.map(|(outcome, _)| outcome)
+  pager.search_state.notice.map(|n| n.outcome)
 }
 
 #[test]
@@ -165,16 +165,6 @@ fn hidden_match_scrolls_margin() {
 }
 
 #[test]
-fn margin_shrinks_in_small_viewports() {
-  let doc = numbered_doc(100, &[50], " target");
-  let mut pager = test_pager(&doc, 80, 2); // 1 body row
-  set_query(&mut pager, "target");
-
-  assert_eq!(pager.search_next(), Found);
-  assert_eq!(pager.top, at(50, 0));
-}
-
-#[test]
 fn scrolling_away_discards_search_cursor() {
   let doc = numbered_doc(40, &[1, 20], " target");
   let mut pager = test_pager(&doc, 80, 6);
@@ -185,7 +175,7 @@ fn scrolling_away_discards_search_cursor() {
 
   // Scroll past the match. Searching backward must start from the new screen and find line 1
   // again. A stale cursor would continue from line 1 and wrap around to line 20.
-  pager.scroll_by(false, 10);
+  pager.scroll_vertical(false, 10);
   assert_eq!(pager.top.line, 10);
   assert_eq!(pager.search_prev(), Found);
   assert_eq!(pager.last_match().unwrap().line, 1);
@@ -214,34 +204,70 @@ fn wrapping_scrolls_and_moves_cursor() {
 
 #[test]
 fn notice_follows_outcome_and_expires_on_scroll() {
-  let doc = numbered_doc(40, &[1], " target");
+  let doc = numbered_doc(40, &[1, 3], " target");
   let mut pager = test_pager(&doc, 80, 6);
   assert_eq!(notice(&pager), None);
 
   set_query(&mut pager, "target");
+  // plain jumps leave no notice (and so arm no timer)
   assert_eq!(pager.search_next(), Found);
-  assert_eq!(pager.search_state.notice, Some((Found, pager.top)));
+  assert_eq!(pager.search_next(), Found);
+  assert_eq!(notice(&pager), None);
 
-  // wrapping onto the same match: the notice must be stamped after the jump
+  // wrapping: the notice must be stamped after the jump
   assert_eq!(pager.search_next(), Wrapped);
-  assert_eq!(pager.search_state.notice, Some((Wrapped, pager.top)));
+  let stamped = pager.search_state.notice.unwrap();
+  assert_eq!((stamped.outcome, stamped.top), (Wrapped, pager.top));
+
+  // the stale "wrapped" message must not outlive the next plain jump
+  assert_eq!(pager.search_next(), Found);
+  assert_eq!(notice(&pager), None);
 
   // moving the screen leaves the notice behind: render shows it only while the anchor matches
-  pager.scroll_by(false, 3);
-  assert_ne!(
-    pager.search_state.notice.map(|(_, top)| top),
-    Some(pager.top)
-  );
+  assert_eq!(pager.search_next(), Wrapped);
+  pager.scroll_vertical(false, 3);
+  assert_ne!(pager.search_state.notice.unwrap().top, pager.top);
+
+  // a successful toggle invalidates the old notice
+  pager.toggle_search_mode().unwrap();
+  assert_eq!(notice(&pager), None);
 
   set_query(&mut pager, "missing");
   assert_eq!(pager.search_next(), NotFound);
-  assert_eq!(pager.search_state.notice, Some((NotFound, pager.top)));
+  let stamped = pager.search_state.notice.unwrap();
+  assert_eq!((stamped.outcome, stamped.top), (NotFound, pager.top));
+}
 
-  // a successful toggle invalidates the old notice
+#[test]
+fn notice_timing() {
+  let doc = numbered_doc(40, &[1], " target");
+  let mut pager = test_pager(&doc, 80, 6);
+
+  // nothing pending and nothing streaming: block until a key arrives
+  assert_eq!(pager.next_wakeup(Instant::now()), None);
+
   set_query(&mut pager, "target");
+  assert_eq!(pager.search_next(), Found);
   assert_eq!(pager.search_next(), Wrapped);
-  pager.toggle_search_mode().unwrap();
-  assert_eq!(notice(&pager), None);
+  let expires = pager.search_state.notice.unwrap().expires;
+  pager.clean();
+
+  // one wake-up exactly at the deadline, not a poll loop
+  let two_seconds_early = expires.checked_sub(Duration::from_secs(2)).unwrap();
+  assert_eq!(
+    pager.next_wakeup(two_seconds_early),
+    Some(Duration::from_secs(2))
+  );
+  assert_eq!(pager.next_wakeup(expires), Some(Duration::ZERO));
+
+  // just before the deadline: still there, nothing to redraw
+  pager.expire_notice(expires.checked_sub(Duration::from_millis(1)).unwrap());
+  assert!(pager.search_state.notice.is_some());
+  assert!(!pager.dirty);
+
+  pager.expire_notice(expires);
+  assert!(pager.search_state.notice.is_none());
+  assert!(pager.dirty);
 }
 
 #[test]

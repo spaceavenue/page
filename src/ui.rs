@@ -40,11 +40,7 @@ impl fmt::Display for PaddedLine<'_> {
 
     for grapheme in self.text.graphemes(true) {
       let control = grapheme.chars().any(char::is_control);
-      let glyph_width = if control {
-        1
-      } else {
-        UnicodeWidthStr::width(grapheme)
-      };
+      let glyph_width = glyph_width(grapheme);
       if used + glyph_width > self.width {
         break;
       }
@@ -100,6 +96,23 @@ impl Ui {
       ResetColor
     )?;
     Ok(())
+  }
+}
+
+pub fn display_width(text: &str) -> usize {
+  let mut width = 0usize;
+  for grapheme in text.graphemes(true) {
+    width += glyph_width(grapheme);
+  }
+  width
+}
+
+fn glyph_width(grapheme: &str) -> usize {
+  let control = grapheme.chars().any(char::is_control);
+  if control {
+    1
+  } else {
+    UnicodeWidthStr::width(grapheme)
   }
 }
 

@@ -1,4 +1,4 @@
-use crate::pager::search::SearchPrompt;
+use crate::pager::prompt::SearchPrompt;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Mode {

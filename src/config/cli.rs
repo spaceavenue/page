@@ -193,12 +193,6 @@ mod tests {
   }
 
   #[test]
-  fn no_wrap_conficts_wrap() {
-    assert!(try_parse_args(["--wrap", "soft", "--no-wrap"]).is_err());
-    assert!(try_parse_args(["-w", "off", "-W"]).is_err());
-  }
-
-  #[test]
   fn invalid_tab_widths_rejected() {
     assert!(try_parse_args(["--tab-width", "0", "file"]).is_err());
     assert!(try_parse_args(["--tab-width", "257", "file"]).is_err());

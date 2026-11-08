@@ -1,19 +1,21 @@
 mod mode;
+mod prompt;
 mod render;
 mod search;
 
 use std::io::{BufWriter, Write};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use crossterm::event::KeyCode::{Backspace, Char, Enter, Esc};
-use crossterm::event::{Event, KeyEvent};
+use crossterm::event::KeyCode::{Backspace, Char, Delete, End, Enter, Esc, Home, Left, Right};
+use crossterm::event::{Event, KeyEvent, KeyModifiers};
 use crossterm::{event, terminal};
 
 use crate::buffer::Buffer;
 use crate::config::action::{Action, action_for_key};
 use crate::config::options::Options;
 use crate::pager::mode::Mode;
-use crate::pager::search::{SearchPrompt, SearchState};
+use crate::pager::prompt::SearchPrompt;
+use crate::pager::search::SearchState;
 use crate::scroll::{self, Anchor};
 use crate::search::Matcher;
 use crate::text::{ParsedLine, WrapMode};
@@ -86,24 +88,6 @@ impl Pager {
     Ok(pager)
   }
 
-  fn gutter_width(&self) -> usize {
-    self
-      .viewport
-      .gutter_width(self.opts.line_numbers, self.buffer.line_count())
-  }
-
-  fn content_width(&self) -> usize {
-    self.viewport.content_width(self.gutter_width())
-  }
-
-  const fn dirty(&mut self) {
-    self.dirty = true;
-  }
-
-  const fn clean(&mut self) {
-    self.dirty = false;
-  }
-
   /// Run the interactive pager event loop.
   ///
   /// # Errors
@@ -113,6 +97,7 @@ impl Pager {
     let mut stdout = BufWriter::with_capacity(64 * 1024, std::io::stdout().lock());
 
     while self.running {
+      self.expire_notice(Instant::now());
       let got_data = self.buffer.read_from_stdin()?;
       if got_data {
         self.dirty();
@@ -126,13 +111,35 @@ impl Pager {
         stdout.flush()?;
         self.clean();
       }
-
-      if !self.buffer.is_streaming() || event::poll(STREAM_POLL_INTERVAL)? {
+      let timeout = self.next_wakeup(Instant::now());
+      let ready = timeout.map_or(Ok(true), event::poll)?;
+      if ready {
         self.handle_event(event::read()?);
       }
     }
 
     Ok(())
+  }
+
+  fn next_wakeup(&self, now: Instant) -> Option<Duration> {
+    if let Some(notice) = self.search_state.notice {
+      let duration = notice.expires.saturating_duration_since(now);
+      if self.buffer.is_streaming() {
+        return Some(duration.min(STREAM_POLL_INTERVAL));
+      }
+      return Some(duration);
+    } else if self.buffer.is_streaming() {
+      return Some(STREAM_POLL_INTERVAL);
+    }
+    None
+  }
+
+  const fn dirty(&mut self) {
+    self.dirty = true;
+  }
+
+  const fn clean(&mut self) {
+    self.dirty = false;
   }
 
   fn handle_event(&mut self, event: Event) {
@@ -173,14 +180,19 @@ impl Pager {
     let Mode::Search(prompt) = &mut self.mode else {
       return;
     };
+    let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
     match key_event.code {
       Esc => self.mode = Mode::Normal,
-      Char(c) => prompt.query.push(c),
-      Backspace => {
-        prompt.query.pop();
-      },
+      Char('c') if ctrl => self.mode = Mode::Normal,
+      Char(ch) if !ctrl => prompt.insert(ch),
+      Backspace => prompt.backspace(),
+      Delete => prompt.delete(),
+      Left => prompt.move_left(),
+      Right => prompt.move_right(),
+      Home => prompt.home(),
+      End => prompt.end(),
       Enter => match Matcher::with_values(
-        &prompt.query,
+        prompt.query(),
         self.search_state.mode,
         self.search_state.case_sensitivity,
       ) {
@@ -207,12 +219,12 @@ impl Pager {
     let body = self.viewport.body_height();
 
     match action {
-      LineUp => self.scroll_by(true, 1),
-      LineDown => self.scroll_by(false, 1),
-      PageUp => self.scroll_by(true, body),
-      PageDown => self.scroll_by(false, body),
-      HalfPageUp => self.scroll_by(true, (body / 2).max(1)),
-      HalfPageDown => self.scroll_by(false, (body / 2).max(1)),
+      LineUp => self.scroll_vertical(true, 1),
+      LineDown => self.scroll_vertical(false, 1),
+      PageUp => self.scroll_vertical(true, body),
+      PageDown => self.scroll_vertical(false, body),
+      HalfPageUp => self.scroll_vertical(true, (body / 2).max(1)),
+      HalfPageDown => self.scroll_vertical(false, (body / 2).max(1)),
       GotoTop => {
         self.following = false;
         self.set_top(Anchor::default());
@@ -241,7 +253,7 @@ impl Pager {
     self.dirty();
   }
 
-  fn scroll_by(&mut self, up: bool, rows: usize) {
+  fn scroll_vertical(&mut self, up: bool, rows: usize) {
     if up {
       self.following = false;
       self.top = self.rewind(self.top, rows);
@@ -280,6 +292,26 @@ impl Pager {
     }
   }
 
+  fn expire_notice(&mut self, now: Instant) {
+    let Some(notice) = self.search_state.notice else {
+      return;
+    };
+    if notice.expires <= now {
+      self.search_state.notice = None;
+      self.dirty();
+    }
+  }
+
+  fn gutter_width(&self) -> usize {
+    self
+      .viewport
+      .gutter_width(self.opts.line_numbers, self.buffer.line_count())
+  }
+
+  fn content_width(&self) -> usize {
+    self.viewport.content_width(self.gutter_width())
+  }
+
   fn max_visible_width(&self) -> usize {
     let mut scratch = ParsedLine::default();
     let end = self.viewport.bottom_line(self.top.line);
@@ -291,7 +323,6 @@ impl Pager {
         max = max.max(scratch.display_width());
       }
     }
-
     max
   }
 

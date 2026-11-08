@@ -8,6 +8,7 @@ fn context(reading: bool) -> StatusContext<'static> {
     lines: 123,
     percent: 42,
     reading,
+    notice: "",
   }
 }
 
@@ -29,10 +30,19 @@ fn compiled(source: &str) -> StatusTemplate {
 #[test]
 fn default_status_template_matches() {
   let status = StatusTemplate::default();
-  assert_eq!(render(&status, &context(false)), "file.txt 123 lines 42% ");
+  assert_eq!(render(&status, &context(false)), "file.txt 123 lines 42%  ");
   assert_eq!(
     render(&status, &context(true)),
-    "file.txt 123+ lines 42% [reading...]"
+    "file.txt 123+ lines 42% [reading...] "
+  );
+
+  let context = StatusContext {
+    notice: "[search]: wrapped around document",
+    ..context(false)
+  };
+  assert_eq!(
+    render(&status, &context),
+    "file.txt 123 lines 42%  [search]: wrapped around document"
   );
 }
 

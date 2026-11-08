@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use unicode_width::UnicodeWidthStr;
 
@@ -13,12 +14,8 @@ use crate::text::WrapMode;
 const SCROLL_MARGIN_ROWS: usize = 2;
 /// Columns of context kept left of a match when a jump has to scroll horizontally.
 const SCROLL_MARGIN_COLS: usize = 8;
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SearchPrompt {
-  pub query: String,
-  pub error: Option<SearchError>,
-}
+/// Expiry time for a notice.
+const NOTICE_TTL: Duration = Duration::from_secs(3);
 
 /// A snapshot of where the last search was.
 ///
@@ -48,13 +45,20 @@ impl SearchOutcome {
   }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Notice {
+  pub outcome: SearchOutcome,
+  pub top: Anchor,
+  pub expires: Instant,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SearchState {
   pub matcher: Option<Matcher>,
   pub mode: SearchMode,
   pub case_sensitivity: CaseSensitivity,
   pub cursor: Option<SearchCursor>,
-  pub notice: Option<(SearchOutcome, Anchor)>,
+  pub notice: Option<Notice>,
 }
 
 impl SearchState {
@@ -106,7 +110,16 @@ impl Pager {
 
   fn search(&mut self, direction: SearchDirection) -> SearchOutcome {
     let outcome = self.find_and_jump(direction);
-    self.search_state.notice = Some((outcome, self.top));
+    match outcome {
+      SearchOutcome::NoMatcher | SearchOutcome::Found => self.search_state.notice = None,
+      SearchOutcome::NotFound | SearchOutcome::Wrapped => {
+        self.search_state.notice = Some(Notice {
+          outcome,
+          top: self.top,
+          expires: Instant::now() + NOTICE_TTL,
+        });
+      },
+    }
     outcome
   }
 
