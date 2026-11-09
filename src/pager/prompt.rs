@@ -1,29 +1,56 @@
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::search::SearchError;
+use crate::search::settings::SearchSettings;
 
+/// The search prompt typed by the user.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SearchPrompt {
   query: String,
   cursor: usize,
+  pub settings: SearchSettings,
   pub error: Option<SearchError>,
 }
 
 impl SearchPrompt {
+  /// Create an empty prompt with `settings`.
+  #[must_use]
+  pub fn new(settings: SearchSettings) -> Self {
+    Self {
+      settings,
+      ..Self::default()
+    }
+  }
+
+  /// Switch the draft between literal and regex.
+  pub fn toggle_mode(&mut self) {
+    self.settings.mode = self.settings.mode.toggled();
+    self.error = None;
+  }
+
+  /// Cycle the case-sensitivity of the draft.
+  pub const fn toggle_case(&mut self) {
+    self.settings.case = self.settings.case.next();
+  }
+
+  /// Returns the query in the prompt.
   pub fn query(&self) -> &str {
     &self.query
   }
 
+  /// Returns the query until the cursor.
   pub fn before_cursor(&self) -> &str {
     self.query.get(..self.cursor).unwrap_or_default()
   }
 
+  /// Insert a character at current cursor location.
   pub fn insert(&mut self, ch: char) {
     self.query.insert(self.cursor, ch);
     self.cursor += ch.len_utf8();
     self.error = None;
   }
 
+  /// Delete the character before the cursor.
   pub fn backspace(&mut self) {
     let start = self.prev_boundary();
     self.query.drain(start..self.cursor);
@@ -31,24 +58,29 @@ impl SearchPrompt {
     self.error = None;
   }
 
+  /// Delete the character after the cursor.
   pub fn delete(&mut self) {
     let end = self.next_boundary();
     self.query.drain(self.cursor..end);
     self.error = None;
   }
 
+  /// Move the cursor left.
   pub fn move_left(&mut self) {
     self.cursor = self.prev_boundary();
   }
 
+  /// Move the cursor right.
   pub fn move_right(&mut self) {
     self.cursor = self.next_boundary();
   }
 
+  /// Move the cursor to the beginning of the query.
   pub const fn home(&mut self) {
     self.cursor = 0;
   }
 
+  /// Move the cursor to the end of the query.
   pub const fn end(&mut self) {
     self.cursor = self.query.len();
   }
@@ -91,7 +123,7 @@ mod tests {
   }
 
   #[test]
-  fn insert_goes_at_the_cursor() {
+  fn insert_goes_at_cursor() {
     let mut prompt = typed("abc");
     prompt.move_left();
     prompt.insert('x');
@@ -144,7 +176,7 @@ mod tests {
   }
 
   #[test]
-  fn cursor_stays_on_a_char_boundary() {
+  fn cursor_stays_on_char_boundary() {
     let mut prompt = typed("日本語");
     prompt.move_left();
     prompt.insert('é');
@@ -157,7 +189,7 @@ mod tests {
   }
 
   #[test]
-  fn edits_clear_the_error_but_movement_does_not() {
+  fn edits_clear_error_but_movement_does_not() {
     let mut prompt = with_error(typed("abc"));
     prompt.move_left();
     prompt.home();

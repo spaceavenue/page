@@ -12,15 +12,14 @@ use crate::text::WrapMode;
 use crate::ui::{BarContent, StatusContext, display_width};
 
 const SEP: &str = "/";
-const SPACE_LEN: usize = 2;
+const SPACE_LEN: usize = 3;
 
 impl Pager {
   /// Render the current frame to `out`.
   ///
   /// # Errors
   ///
-  /// Returns an error if terminal output fails or a coordinate cannot be
-  /// represented as a `u16`.
+  /// Returns an error if output fails or a coordinate cannot be represented as a `u16`.
   pub fn render(&mut self, out: &mut impl io::Write) -> anyhow::Result<()> {
     // need to destructure here to keep borrow checker happy...
     match &self.mode {
@@ -163,10 +162,10 @@ impl Pager {
     let reading = self.buffer.is_streaming();
     let percent = self.viewport.percent(self.top.line, lines);
     let notice = self
-      .search_state
       .notice
+      .as_ref()
       .filter(|n| n.top == self.top)
-      .map_or("", |n| n.outcome.label());
+      .map_or("", |n| n.message());
 
     let context = StatusContext::new(title, lines, percent, reading, notice);
     let status_row = u16::try_from(self.viewport.last_row())?;
@@ -186,11 +185,12 @@ impl Pager {
       return Ok(());
     };
 
-    let mode = self.search_state.mode.label();
+    let mode = prompt.settings.mode.label();
+    let case = prompt.settings.case.label();
     let query = prompt.query();
     let error = prompt.error.as_ref().map_or("", SearchError::message);
 
-    let prefix_len = mode.len() + SEP.len() + SPACE_LEN;
+    let prefix_len = mode.len() + case.len() + SEP.len() + SPACE_LEN;
     let prompt_len = display_width(prompt.before_cursor());
     let width = (prefix_len + prompt_len).min(self.viewport.width().saturating_sub(1));
     let col = u16::try_from(width)?;
@@ -200,7 +200,7 @@ impl Pager {
       out,
       footer_row,
       self.viewport.width(),
-      &BarContent::Fmt(format_args!("{mode} {SEP} {query} {error}")),
+      &BarContent::Fmt(format_args!("{mode} {case} {SEP} {query} {error}")),
       &mut self.status_buf,
     )?;
     show_cursor(out, col, footer_row)?;

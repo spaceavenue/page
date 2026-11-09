@@ -1,6 +1,6 @@
 use std::num::NonZeroUsize;
 
-use crate::search::{CaseSensitivity, SearchMode};
+use crate::search::settings::SearchSettings;
 use crate::text::WrapMode;
 use crate::ui::Ui;
 
@@ -17,10 +17,8 @@ pub struct Options {
   pub tab_width: NonZeroUsize,
   /// Show a line-number gutter (default = false).
   pub line_numbers: bool,
-  /// Initial search mode (default = substring).
-  pub search_mode: SearchMode,
-  /// Initial case case sensitivity of searches (default = Smart Case)
-  pub case_sensitivity: CaseSensitivity,
+  /// Initial search mode (default = substring) and case sensitivity (default = Smart Case).
+  pub search_settings: SearchSettings,
   /// Pager colors and status bar config.
   pub ui: Ui,
 }
@@ -33,8 +31,7 @@ impl Default for Options {
       true,
       NonZeroUsize::new(8).unwrap_or(NonZeroUsize::MIN),
       false,
-      SearchMode::default(),
-      CaseSensitivity::default(),
+      SearchSettings::default(),
       Ui::default(),
     )
   }
@@ -50,8 +47,7 @@ impl Options {
     ansi: bool,
     tab_width: NonZeroUsize,
     line_numbers: bool,
-    search_mode: SearchMode,
-    case_sensitivity: CaseSensitivity,
+    search_settings: SearchSettings,
     ui: Ui,
   ) -> Self {
     Self {
@@ -60,8 +56,7 @@ impl Options {
       ansi,
       tab_width,
       line_numbers,
-      search_mode,
-      case_sensitivity,
+      search_settings,
       ui,
     }
   }

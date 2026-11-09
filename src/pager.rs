@@ -1,4 +1,5 @@
 mod mode;
+mod notice;
 mod prompt;
 mod render;
 mod search;
@@ -14,6 +15,7 @@ use crate::buffer::Buffer;
 use crate::config::action::{Action, action_for_key};
 use crate::config::options::Options;
 use crate::pager::mode::Mode;
+use crate::pager::notice::Notice;
 use crate::pager::prompt::SearchPrompt;
 use crate::pager::search::SearchState;
 use crate::scroll::{self, Anchor};
@@ -32,8 +34,12 @@ const HELP: &str = r"page-rs keys,
   C-d / C-u              half page down/up
   g / Home               go to top
   G / End                go to bottom
-  Left / Right           scroll horizontally (chop mode)
+  Left / Right           scroll horizontally (no wrap mode)
   0                      reset horizontal scroll
+  /                      start searching
+  C-c / Esc              stop searching (search mode)
+  M-r                    toggle between regex and substring modes
+  M-c                    cycle between smart -> sensitive -> insensitive case
   h / ?                  this help
   q / Esc / C-c          quit
 ";
@@ -50,6 +56,7 @@ pub struct Pager {
   following: bool,
   opts: Options,
   search_state: SearchState,
+  notice: Option<Notice>,
   parsed_buf: ParsedLine,
   status_buf: String,
 }
@@ -63,7 +70,7 @@ impl Pager {
   pub fn new(buffer: Buffer, title: String, options: Options) -> anyhow::Result<Self> {
     let (width, height) = terminal::size()?;
     let follow = options.initial_follow;
-    let search_state = SearchState::new(options.search_mode, options.case_sensitivity);
+    let search_state = SearchState::new(options.search_settings);
 
     let mut pager = Self {
       buffer,
@@ -77,6 +84,7 @@ impl Pager {
       following: follow,
       opts: options,
       search_state,
+      notice: None,
       parsed_buf: ParsedLine::default(),
       status_buf: String::new(),
     };
@@ -122,7 +130,7 @@ impl Pager {
   }
 
   fn next_wakeup(&self, now: Instant) -> Option<Duration> {
-    if let Some(notice) = self.search_state.notice {
+    if let Some(notice) = &self.notice {
       let duration = notice.expires.saturating_duration_since(now);
       if self.buffer.is_streaming() {
         return Some(duration.min(STREAM_POLL_INTERVAL));
@@ -181,9 +189,12 @@ impl Pager {
       return;
     };
     let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key_event.modifiers.contains(KeyModifiers::ALT);
     match key_event.code {
       Esc => self.mode = Mode::Normal,
+      Char('c') if alt && !ctrl => prompt.toggle_case(),
       Char('c') if ctrl => self.mode = Mode::Normal,
+      Char('r') if alt && !ctrl => prompt.toggle_mode(),
       Char(ch) if !ctrl => prompt.insert(ch),
       Backspace => prompt.backspace(),
       Delete => prompt.delete(),
@@ -191,14 +202,11 @@ impl Pager {
       Right => prompt.move_right(),
       Home => prompt.home(),
       End => prompt.end(),
-      Enter => match Matcher::with_values(
-        prompt.query(),
-        self.search_state.mode,
-        self.search_state.case_sensitivity,
-      ) {
+      Enter => match Matcher::with_settings(prompt.query(), prompt.settings) {
         Ok(m) => {
           self.search_state.matcher = Some(m);
           self.search_state.cursor = None;
+          self.search_state.settings = prompt.settings;
           self.search_next();
           self.mode = Mode::Normal;
         },
@@ -212,8 +220,8 @@ impl Pager {
   fn dispatch(&mut self, action: Action) {
     use Action::{
       GotoBottom, GotoTop, HalfPageDown, HalfPageUp, Help, LineDown, LineUp, PageDown, PageUp,
-      Quit, ScrollHome, ScrollLeft, ScrollRight, SearchBackward, SearchForward, SearchModeToggle,
-      SearchStart,
+      Quit, ScrollHome, ScrollLeft, ScrollRight, SearchBackward, SearchCaseToggle, SearchForward,
+      SearchModeToggle, SearchStart,
     };
 
     let body = self.viewport.body_height();
@@ -235,20 +243,15 @@ impl Pager {
       ScrollHome => self.left = 0,
       Help => self.mode = Mode::Help,
       Quit => self.running = false,
-      SearchStart => {
-        let prompt = SearchPrompt::default();
-        self.mode = Mode::Search(prompt);
-      },
+      SearchStart => self.mode = Mode::Search(SearchPrompt::new(self.search_state.settings)),
       SearchForward => {
         self.search_next();
       },
       SearchBackward => {
         self.search_prev();
       },
-      SearchModeToggle => {
-        // TODO: surface the error.
-        let _ = self.toggle_search_mode();
-      },
+      SearchModeToggle => self.toggle_search_mode(),
+      SearchCaseToggle => self.toggle_search_case(),
     }
     self.dirty();
   }
@@ -289,16 +292,6 @@ impl Pager {
 
     if limit > self.left {
       self.left += 1;
-    }
-  }
-
-  fn expire_notice(&mut self, now: Instant) {
-    let Some(notice) = self.search_state.notice else {
-      return;
-    };
-    if notice.expires <= now {
-      self.search_state.notice = None;
-      self.dirty();
     }
   }
 
@@ -386,5 +379,7 @@ impl Pager {
   }
 }
 
+#[cfg(test)]
+mod test_util;
 #[cfg(test)]
 mod tests;
