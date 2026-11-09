@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use crossterm::style::{Attribute, Color};
 
 #[cfg(test)]
@@ -279,7 +281,7 @@ fn render_row_emits_text_and_resets_style() {
   let line = parsed(b"\x1b[31mred\x1b[0m");
   let mut out = Vec::new();
   let range = line.rows(80, WrapMode::Soft).next().unwrap_or(0..0);
-  assert!(line.render_range(&mut out, range).is_ok());
+  assert!(line.render_range(&mut out, range, &[]).is_ok());
   let output = String::from_utf8_lossy(&out);
   assert!(output.contains("red"));
   assert!(output.contains("\x1b[0m"));
@@ -385,4 +387,74 @@ fn tab_after_wide_grapheme_aligns() {
   let spaces = " ".repeat(6);
   let expected = format!("{family}{spaces}b");
   assert_eq!(line.text, expected);
+}
+
+fn ansi(command: impl crossterm::Command) -> String {
+  let mut out = Vec::new();
+  crossterm::queue!(out, command).unwrap();
+  String::from_utf8(out).unwrap()
+}
+
+#[test]
+fn render_range_applies_highlights() {
+  type Case<'a> = (&'a [u8], Vec<Highlight>, std::ops::Range<usize>, String);
+  use crossterm::style::{SetAttribute, SetBackgroundColor, SetForegroundColor};
+
+  let reset = ansi(SetAttribute(Attribute::Reset));
+  let red = ansi(SetForegroundColor(Color::DarkRed));
+  let bg = ansi(SetBackgroundColor(Color::Yellow));
+  let hl = |range| Highlight {
+    range,
+    style: Style {
+      bg: Some(Color::Yellow),
+      ..Style::default()
+    },
+  };
+
+  // (raw input, highlights, row range, expected output)
+  let cases: Vec<Case> = vec![
+    // no highlights: unchanged output
+    (b"abcdef", vec![], 0..6, "abcdef".to_string()),
+    // inside one run: the text before and after keeps the run style
+    (
+      b"abcdef",
+      vec![hl(2..4)],
+      0..6,
+      format!("ab{reset}{bg}cd{reset}ef"),
+    ),
+    // spanning two runs: the highlight keeps the foreground of each run
+    (
+      b"\x1b[31mab\x1b[0mcd",
+      vec![hl(1..3)],
+      0..4,
+      format!("{reset}{red}a{reset}{red}{bg}b{reset}{bg}c{reset}d"),
+    ),
+    // ending exactly on a run boundary must neither hang nor bleed into the next run
+    (
+      b"\x1b[31mab\x1b[0mcd",
+      vec![hl(0..2)],
+      0..4,
+      format!("{reset}{red}{bg}ab{reset}cd"),
+    ),
+    // clipped by the row: starts before it and ends after it
+    (
+      b"abcdef",
+      vec![hl(1..5)],
+      2..4,
+      format!("{reset}{bg}cd{reset}"),
+    ),
+  ];
+
+  for (raw, highlights, range, expected) in cases {
+    let line = parsed(raw);
+    let mut out = Vec::new();
+    line
+      .render_range(&mut out, range.clone(), &highlights)
+      .unwrap();
+    assert_eq!(
+      String::from_utf8(out).unwrap(),
+      expected,
+      "failed on {raw:?} {highlights:?} {range:?}"
+    );
+  }
 }

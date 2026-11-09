@@ -20,7 +20,7 @@ use crate::pager::prompt::SearchPrompt;
 use crate::pager::search::SearchState;
 use crate::scroll::{self, Anchor};
 use crate::search::Matcher;
-use crate::text::{ParsedLine, WrapMode};
+use crate::text::{Highlight, ParsedLine, WrapMode};
 use crate::ui::viewport::Viewport;
 
 const STREAM_POLL_INTERVAL: Duration = Duration::from_millis(16);
@@ -58,6 +58,7 @@ pub struct Pager {
   search_state: SearchState,
   notice: Option<Notice>,
   parsed_buf: ParsedLine,
+  highlight_buf: Vec<Highlight>,
   status_buf: String,
 }
 
@@ -86,6 +87,7 @@ impl Pager {
       search_state,
       notice: None,
       parsed_buf: ParsedLine::default(),
+      highlight_buf: Vec::new(),
       status_buf: String::new(),
     };
 

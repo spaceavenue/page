@@ -123,6 +123,10 @@ pub struct Theme {
   pub status_bg: Color,
   pub gutter_fg: Color,
   pub filler_fg: Color,
+  pub match_fg: Color,
+  pub match_bg: Color,
+  pub cur_match_fg: Color,
+  pub cur_match_bg: Color,
 }
 
 impl Default for Theme {
@@ -132,6 +136,10 @@ impl Default for Theme {
       status_bg: Color::Black,
       gutter_fg: Color::DarkGrey,
       filler_fg: Color::Blue,
+      match_fg: Color::White,
+      match_bg: Color::DarkGreen,
+      cur_match_fg: Color::Black,
+      cur_match_bg: Color::Green,
     }
   }
 }

@@ -8,6 +8,7 @@ use crossterm::style::{
 
 use super::ParsedLine;
 use super::ansi::Style;
+use crate::text::Highlight;
 
 impl ParsedLine {
   /// Render one display row, including the SGR commands needed to apply its
@@ -16,17 +17,25 @@ impl ParsedLine {
   /// # Errors
   ///
   /// Returns an error if writing to `out` fails.
-  pub fn render_range(&self, out: &mut impl Write, range: Range<usize>) -> anyhow::Result<()> {
+  pub fn render_range(
+    &self,
+    out: &mut impl Write,
+    range: Range<usize>,
+    highlights: &[Highlight],
+  ) -> anyhow::Result<()> {
     if range.is_empty() {
       return Ok(());
     }
 
     let mut current = Style::default();
 
+    let mut hi = highlights.partition_point(|h| h.range.end <= range.start);
+
     let first = self
       .runs
       .partition_point(|run| run.start <= range.start)
       .saturating_sub(1);
+
     let runs = self.runs.get(first..).unwrap_or_default();
 
     for (offset, run) in runs.iter().enumerate() {
@@ -40,15 +49,23 @@ impl ParsedLine {
         .map_or(self.text.len(), |next| next.start);
       let end = next_start.min(range.end);
 
-      let Some(piece) = self.text.get(start..end).filter(|piece| !piece.is_empty()) else {
-        continue;
-      };
+      // let Some(piece) = self.text.get(start..end).filter(|piece| !piece.is_empty()) else {
+      //   continue;
+      // };
 
-      if run.style != current {
-        apply_style(out, run.style)?;
-        current = run.style;
+      let mut pos = start;
+      while pos < end {
+        while highlights.get(hi).is_some_and(|h| h.range.end <= pos) {
+          hi += 1;
+        }
+        let (seg_end, style) = match highlights.get(hi) {
+          Some(h) if h.range.start <= pos => (h.range.end.min(end), run.style.overlay(h.style)),
+          Some(h) => (h.range.start.min(end), run.style),
+          None => (end, run.style),
+        };
+        write_piece(out, self.text.get(pos..seg_end), style, &mut current)?;
+        pos = seg_end;
       }
-      queue!(out, Print(piece))?;
     }
 
     if current != Style::default() {
@@ -57,6 +74,23 @@ impl ParsedLine {
 
     Ok(())
   }
+}
+
+fn write_piece(
+  out: &mut impl Write,
+  slice: Option<&str>,
+  style: Style,
+  current: &mut Style,
+) -> anyhow::Result<()> {
+  let Some(slice) = slice else {
+    return Ok(());
+  };
+  if style != *current {
+    apply_style(out, style)?;
+    *current = style;
+  }
+  queue!(out, Print(slice))?;
+  Ok(())
 }
 
 fn apply_style(out: &mut impl Write, style: Style) -> anyhow::Result<()> {

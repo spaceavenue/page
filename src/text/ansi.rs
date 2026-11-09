@@ -16,6 +16,16 @@ pub struct Style {
   pub attrs: Attributes,
 }
 
+impl Style {
+  pub fn overlay(self, over: Self) -> Self {
+    Self {
+      fg: over.fg.or(self.fg),
+      bg: over.bg.or(self.bg),
+      attrs: self.attrs | over.attrs,
+    }
+  }
+}
+
 /// Consume one escape sequence; the reader must be positioned on `ESC`.
 ///
 /// Returns the style after applying the sequence.

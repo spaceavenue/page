@@ -2,13 +2,14 @@ use std::io::{self};
 
 use crossterm::cursor::{MoveTo, SetCursorStyle};
 use crossterm::queue;
-use crossterm::style::{Print, ResetColor, SetForegroundColor};
+use crossterm::style::{Attributes, Print, ResetColor, SetForegroundColor};
 use crossterm::terminal::{Clear, ClearType};
 
 use super::mode::Mode;
 use super::{HELP, Pager};
 use crate::search::SearchError;
-use crate::text::WrapMode;
+use crate::text::ansi::Style;
+use crate::text::{Highlight, WrapMode};
 use crate::ui::{BarContent, StatusContext, display_width};
 
 const SEP: &str = "/";
@@ -21,7 +22,6 @@ impl Pager {
   ///
   /// Returns an error if output fails or a coordinate cannot be represented as a `u16`.
   pub fn render(&mut self, out: &mut impl io::Write) -> anyhow::Result<()> {
-    // need to destructure here to keep borrow checker happy...
     match &self.mode {
       Mode::Normal => self.render_normal(out),
       Mode::Help => self.render_help(out),
@@ -40,7 +40,6 @@ impl Pager {
     let mut line = self.top.line;
     let mut skip = self.top.row;
     let mut screen_row = 0usize;
-
     while screen_row < body {
       let Some(raw) = self.buffer.line_bytes(line) else {
         break;
@@ -49,6 +48,9 @@ impl Pager {
       self
         .parsed_buf
         .parse(raw, self.opts.ansi, self.opts.tab_width);
+
+      self.highlight_buf.clear();
+      self.collect_highlights(line);
 
       match self.opts.wrap {
         WrapMode::None => {
@@ -62,7 +64,9 @@ impl Pager {
               Print(format_args!("{:width$}", "", width = window.pad))
             )?;
           }
-          self.parsed_buf.render_range(out, window.range)?;
+          self
+            .parsed_buf
+            .render_range(out, window.range, &self.highlight_buf)?;
           screen_row += 1;
         },
         WrapMode::Soft | WrapMode::Hard => {
@@ -83,7 +87,9 @@ impl Pager {
             queue!(out, MoveTo(0, cursor_row), Clear(ClearType::CurrentLine))?;
             let first_row = start_row == 0 && offset == 0;
             self.render_gutter(out, line, first_row, gutter)?;
-            self.parsed_buf.render_range(out, range)?;
+            self
+              .parsed_buf
+              .render_range(out, range, &self.highlight_buf)?;
             screen_row += 1;
           }
         },
@@ -206,6 +212,40 @@ impl Pager {
     show_cursor(out, col, footer_row)?;
     Ok(())
   }
+
+  fn collect_highlights(&mut self, line: usize) {
+    let current_style = Style {
+      fg: Some(self.opts.ui.theme.cur_match_fg),
+      bg: Some(self.opts.ui.theme.cur_match_bg),
+      attrs: Attributes::none(),
+    };
+
+    let normal_style = Style {
+      fg: Some(self.opts.ui.theme.match_fg),
+      bg: Some(self.opts.ui.theme.match_bg),
+      attrs: Attributes::none(),
+    };
+
+    let current = self
+      .search_state
+      .cursor
+      .as_ref()
+      .filter(|c| c.hit.line == line)
+      .map(|c| &c.hit.range);
+
+    if let Some(matcher) = &self.search_state.matcher {
+      self
+        .highlight_buf
+        .extend(matcher.find_iter(self.parsed_buf.text()).map(|range| {
+          let style = if current == Some(&range) {
+            current_style
+          } else {
+            normal_style
+          };
+          Highlight { range, style }
+        }));
+    }
+  }
 }
 
 fn hide_cursor(out: &mut impl io::Write) -> anyhow::Result<()> {
@@ -225,4 +265,51 @@ fn show_cursor(out: &mut impl io::Write, col: u16, row: u16) -> anyhow::Result<(
     crossterm::cursor::Show,
   )?;
   Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+  use crate::pager::test_util::{set_query, test_pager};
+
+  #[test]
+  fn only_landed_on_match_gets_current_style() {
+    let mut pager = test_pager("foo bar foo\nfoo\n", 80, 5);
+    let theme = pager.opts.ui.theme;
+    set_query(&mut pager, "foo");
+
+    let collect = |pager: &mut crate::pager::Pager, line: usize| {
+      pager.buffer.index_till_line(line + 1);
+      let raw = pager.buffer.line_bytes(line).unwrap().to_vec();
+      pager
+        .parsed_buf
+        .parse(&raw, pager.opts.ansi, pager.opts.tab_width);
+      pager.highlight_buf.clear();
+      pager.collect_highlights(line);
+      pager
+        .highlight_buf
+        .iter()
+        .map(|h| (h.range.clone(), h.style.bg))
+        .collect::<Vec<_>>()
+    };
+
+    // before any search lands: every match is highlighted, none as current
+    assert_eq!(
+      collect(&mut pager, 0),
+      vec![(0..3, Some(theme.match_bg)), (8..11, Some(theme.match_bg))]
+    );
+
+    // the first jump lands on 0..3
+    pager.search_next();
+    assert_eq!(
+      collect(&mut pager, 0),
+      vec![
+        (0..3, Some(theme.cur_match_bg)),
+        (8..11, Some(theme.match_bg))
+      ]
+    );
+
+    // the same range on another line must not count as current
+    assert_eq!(collect(&mut pager, 1), vec![(0..3, Some(theme.match_bg))]);
+  }
 }

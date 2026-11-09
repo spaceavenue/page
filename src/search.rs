@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 pub mod settings;
 
 use std::ops::Range;
@@ -65,15 +63,11 @@ pub struct Matcher {
 }
 
 impl Matcher {
-  /// Compile a `query` with default search mode and case sensitivity.
+  /// Compile a `query` with `settings`.
   ///
   /// # Errors
   ///
   /// Returns a [`SearchError`] for an empty or invalid query.
-  pub fn new(query: &str) -> Result<Self, SearchError> {
-    Self::with_settings(query, SearchSettings::default())
-  }
-
   pub fn with_settings(query: &str, settings: SearchSettings) -> Result<Self, SearchError> {
     if query.is_empty() {
       return Err(SearchError::empty());
@@ -103,14 +97,7 @@ impl Matcher {
     Ok(())
   }
 
-  /// The original query text.
-  #[must_use]
-  pub fn query(&self) -> &str {
-    &self.query
-  }
-
-  /// Mode used to compile the query.
-  #[must_use]
+  /// Search mode configuration.
   pub const fn mode(&self) -> SearchMode {
     self.settings.mode
   }
@@ -121,28 +108,16 @@ impl Matcher {
     self.settings.case
   }
 
-  /// Whether this matcher executes case-insensitively.
-  #[must_use]
-  pub fn is_case_insensitive(&self) -> bool {
-    self.case().is_case_insensitive(&self.query)
-  }
-
   /// Find the first match starting at or after byte offset `from`.
   #[must_use]
   pub fn find(&self, text: &str, from: usize) -> Option<Range<usize>> {
-    match &self.kind {
-      Kind::Substring(needle) => substring_find(text, needle, from),
-      Kind::Regex(regex) => regex_find(regex, text, from),
-    }
+    self.find_iter(text).find(|r| r.start >= from)
   }
 
   /// Find the last match ending at or before byte offset `before`.
   #[must_use]
   pub fn rfind(&self, text: &str, before: usize) -> Option<Range<usize>> {
-    match &self.kind {
-      Kind::Substring(needle) => substring_rfind(text, needle, before),
-      Kind::Regex(regex) => regex_rfind(regex, text, before),
-    }
+    self.find_iter(text).take_while(|r| r.end <= before).last()
   }
 
   /// Find a match in `text` at or after/before `col` in `direction`.
@@ -163,8 +138,9 @@ impl Matcher {
   pub fn find_iter<'r, 't>(&'r self, text: &'t str) -> Matches<'r, 't> {
     match &self.kind {
       Kind::Substring(needle) => Matches::Substring {
-        iter: Box::new(memmem::find_iter(text.as_bytes(), needle)),
-        len: needle.len(),
+        text,
+        needle,
+        pos: 0,
       },
       Kind::Regex(regex) => Matches::Regex(regex.find_iter(text)),
     }
@@ -174,8 +150,9 @@ impl Matcher {
 /// An iterator yielding non-overlapping match ranges in a line.
 pub enum Matches<'r, 't> {
   Substring {
-    iter: Box<memmem::FindIter<'t, 'r>>,
-    len: usize,
+    text: &'t str,
+    needle: &'r [u8],
+    pos: usize,
   },
   Regex(regex::Matches<'r, 't>),
 }
@@ -185,54 +162,23 @@ impl Iterator for Matches<'_, '_> {
 
   fn next(&mut self) -> Option<Self::Item> {
     match self {
-      Self::Substring { iter, len } => iter.next().map(|start| start..start + *len),
+      Self::Substring { text, needle, pos } => {
+        let hit = {
+          let from = *pos;
+          if from > text.len() || !text.is_char_boundary(from) {
+            return None;
+          }
+          let haystack = text.as_bytes().get(from..)?;
+          let offset = memmem::find(haystack, needle)?;
+          let start = from + offset;
+          Some(start..start + needle.len())
+        }?;
+        *pos = hit.end;
+        Some(hit)
+      },
       Self::Regex(matches) => matches.find(|m| !m.is_empty()).map(|m| m.range()),
     }
   }
-}
-
-fn substring_find(text: &str, needle: &[u8], from: usize) -> Option<Range<usize>> {
-  if from > text.len() || !text.is_char_boundary(from) {
-    return None;
-  }
-  let haystack = text.as_bytes().get(from..)?;
-  let offset = memmem::find(haystack, needle)?;
-  let start = from + offset;
-  Some(start..start + needle.len())
-}
-
-fn substring_rfind(text: &str, needle: &[u8], before: usize) -> Option<Range<usize>> {
-  let before = before.min(text.len());
-  if !text.is_char_boundary(before) {
-    return None;
-  }
-  let haystack = text.as_bytes().get(..before)?;
-  let start = memmem::rfind(haystack, needle)?;
-  Some(start..start + needle.len())
-}
-
-fn regex_find(regex: &Regex, text: &str, from: usize) -> Option<Range<usize>> {
-  if from > text.len() || !text.is_char_boundary(from) {
-    return None;
-  }
-  let haystack = text.get(from..)?;
-  regex
-    .find_iter(haystack)
-    .find(|matched| !matched.is_empty())
-    .map(|matched| from + matched.start()..from + matched.end())
-}
-
-fn regex_rfind(regex: &Regex, text: &str, before: usize) -> Option<Range<usize>> {
-  let before = before.min(text.len());
-  if !text.is_char_boundary(before) {
-    return None;
-  }
-  let haystack = text.get(..before)?;
-  regex
-    .find_iter(haystack)
-    .filter(|matched| !matched.is_empty())
-    .last()
-    .map(|matched| matched.range())
 }
 
 /// An error produced while compiling a search query.
@@ -289,6 +235,15 @@ impl std::error::Error for SearchError {}
 #[allow(clippy::unwrap_used)]
 mod tests {
   use super::*;
+  impl Matcher {
+    pub(crate) fn new(query: &str) -> Result<Self, SearchError> {
+      Self::with_settings(query, SearchSettings::default())
+    }
+
+    fn is_case_insensitive(&self) -> bool {
+      self.case().is_case_insensitive(&self.query)
+    }
+  }
 
   fn matcher(query: &str, mode: SearchMode) -> Result<Matcher, SearchError> {
     Matcher::with_settings(
@@ -348,5 +303,47 @@ mod tests {
     let text = "aaaa aa";
     let hits: Vec<Range<usize>> = matcher.find_iter(text).collect();
     assert_eq!(hits, vec![0..2, 2..4, 5..7]);
+  }
+
+  #[test]
+  #[allow(clippy::single_range_in_vec_init)]
+  fn navigation_agrees_with_find_iter() {
+    use SearchMode::{Regex, Substring};
+    // (query, mode, text, matches the highlighter shows)
+    let cases: [(&str, SearchMode, &str, &[Range<usize>]); 7] = [
+      ("aa", Substring, "aaaa", &[0..2, 2..4]),
+      // overlapping candidates: only the left-aligned one exists
+      ("aa", Substring, "aaa", &[0..2]),
+      // anchors must see the whole line, not the slice after the cursor
+      ("^foo", Regex, "foo foo", &[0..3]),
+      ("foo$", Regex, "foo foo", &[4..7]),
+      // empty matches are never hits
+      ("a*", Regex, "baab", &[1..3]),
+      ("é", Substring, "éaéé", &[0..2, 3..5, 5..7]),
+      ("hello", Substring, "Hello HELLO", &[0..5, 6..11]),
+    ];
+
+    for (query, mode, text, expected) in cases {
+      let m = matcher(query, mode).unwrap();
+      let shown: Vec<_> = m.find_iter(text).collect();
+      assert_eq!(shown, expected, "find_iter on {query:?} in {text:?}");
+
+      // stepping with `n` visits exactly the shown matches
+      let (mut forward, mut from) = (Vec::new(), 0);
+      while let Some(hit) = m.find(text, from) {
+        from = hit.end;
+        forward.push(hit);
+      }
+      assert_eq!(forward, expected, "forward on {query:?} in {text:?}");
+
+      // and stepping with `N` visits them in reverse
+      let (mut backward, mut before) = (Vec::new(), text.len());
+      while let Some(hit) = m.rfind(text, before) {
+        before = hit.start;
+        backward.push(hit);
+      }
+      backward.reverse();
+      assert_eq!(backward, expected, "backward on {query:?} in {text:?}");
+    }
   }
 }

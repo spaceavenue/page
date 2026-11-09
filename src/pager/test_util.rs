@@ -20,6 +20,7 @@ pub fn test_pager(doc: &str, width: usize, height: usize) -> Pager {
     search_state: SearchState::default(),
     notice: None,
     parsed_buf: ParsedLine::default(),
+    highlight_buf: Vec::new(),
     status_buf: String::new(),
   }
 }

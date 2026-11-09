@@ -48,6 +48,13 @@ pub struct Run {
   style: Style,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Highlight {
+  /// Range of matched text.
+  pub(crate) range: Range<usize>,
+  pub(crate) style: Style,
+}
+
 struct LineBuilder<'a> {
   line: &'a mut ParsedLine,
   base_style: Style,
