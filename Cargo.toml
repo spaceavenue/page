@@ -1,11 +1,11 @@
 [package]
 name = "page"
 description = "A rusty terminal pager."
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
 authors = ["spaceavenue <spaceavenue@proton.me>"]
-repository = "https://github.com/spaceavenue/page-rs"
+repository = "https://github.com/spaceavenue/page"
 
 [dependencies]
 anyhow = { version = "1.0.104", default-features = false }

@@ -102,7 +102,7 @@ cargo test
 - **Unicode & Smart Word Wrapping:** Proper column width calculation (including CJK fullwidth characters and emoji). Supports soft (breaking on whitespace boundaries) and hard wrapping, as well as configurable tab stops.
 - **No-wrap mode with horizontal scrolling:** Disable wrapping. The left/right arrows move the visible column window.
 - **Line numbers and a help screen:** Line numbers in the gutter and a help screen to show keymap.
-
+- **Search Capabilities:** Both Regex and Substring (default) searching, with Smart (default), Sensitive and Insensitive case and search highlighting.
 ---
 
 ## Architecture
