@@ -97,7 +97,7 @@ impl Pager {
         };
         // most lines are plain text. skip parsing and search in place
         let text = plain_text(raw).unwrap_or_else(|| {
-          parsed_buf.parse(raw, opts.ansi, opts.tab_width);
+          parsed_buf.parse_line(raw, opts.ansi, opts.tab_width, line);
           parsed_buf.text()
         });
         matcher

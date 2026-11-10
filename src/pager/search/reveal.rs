@@ -18,7 +18,7 @@ impl Pager {
     if let Some(raw) = self.buffer.line_bytes(hit.line) {
       self
         .parsed_buf
-        .parse(raw, self.opts.ansi, self.opts.tab_width);
+        .parse_line(raw, self.opts.ansi, self.opts.tab_width, hit.line);
       match self.opts.wrap {
         WrapMode::None => self.reveal_nowrap(&hit),
         WrapMode::Soft | WrapMode::Hard => self.reveal_wrapped(&hit),
@@ -79,7 +79,8 @@ impl Pager {
     } else {
       0
     };
-    self.set_top(self.rewind(first, margin));
+    let rewinded = self.rewind(first, margin);
+    self.set_top(rewinded);
   }
 
   /// In `text::WrapMode::None` scroll vertically to the hit line and horizontally to the match

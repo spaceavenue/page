@@ -5,6 +5,7 @@ mod render;
 mod search;
 
 use std::io::{BufWriter, Write};
+use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode::{Backspace, Char, Delete, End, Enter, Esc, Home, Left, Right};
@@ -44,6 +45,33 @@ const HELP: &str = r"page-rs keys,
   q / Esc / C-c          quit
 ";
 
+#[derive(PartialEq, Eq)]
+struct RowKey {
+  line: usize,
+  width: usize,
+  wrap: WrapMode,
+  tab_width: NonZeroUsize,
+  ansi: bool,
+}
+
+impl RowKey {
+  const fn create(
+    line: usize,
+    width: usize,
+    wrap: WrapMode,
+    tab_width: NonZeroUsize,
+    ansi: bool,
+  ) -> Self {
+    Self {
+      line,
+      width,
+      wrap,
+      tab_width,
+      ansi,
+    }
+  }
+}
+
 pub struct Pager {
   buffer: Buffer,
   title: String,
@@ -57,7 +85,9 @@ pub struct Pager {
   opts: Options,
   search_state: SearchState,
   notice: Option<Notice>,
+  row_cache: Option<(RowKey, usize)>,
   parsed_buf: ParsedLine,
+  rows_buf: ParsedLine,
   highlight_buf: Vec<Highlight>,
   status_buf: String,
 }
@@ -86,7 +116,9 @@ impl Pager {
       opts: options,
       search_state,
       notice: None,
+      row_cache: None,
       parsed_buf: ParsedLine::default(),
+      rows_buf: ParsedLine::default(),
       highlight_buf: Vec::new(),
       status_buf: String::new(),
     };
@@ -117,7 +149,9 @@ impl Pager {
       }
 
       if self.dirty {
+        write!(stdout, "\x1B[?2026h")?;
         self.render(&mut stdout)?;
+        write!(stdout, "\x1B[?2026l")?;
         stdout.flush()?;
         self.clean();
       }
@@ -307,15 +341,16 @@ impl Pager {
     self.viewport.content_width(self.gutter_width())
   }
 
-  fn max_visible_width(&self) -> usize {
-    let mut scratch = ParsedLine::default();
+  fn max_visible_width(&mut self) -> usize {
     let end = self.viewport.bottom_line(self.top.line);
     let mut max = 0;
 
     for line in self.top.line..end {
       if let Some(raw) = self.buffer.line_bytes(line) {
-        scratch.parse(raw, self.opts.ansi, self.opts.tab_width);
-        max = max.max(scratch.display_width());
+        self
+          .rows_buf
+          .parse(raw, self.opts.ansi, self.opts.tab_width);
+        max = max.max(self.rows_buf.display_width());
       }
     }
     max
@@ -343,14 +378,13 @@ impl Pager {
     }
   }
 
-  fn max_top(&self) -> Anchor {
+  fn max_top(&mut self) -> Anchor {
     let total = self.buffer.line_count();
     if total == 0 {
       return Anchor::default();
     }
     let last = total - 1;
-    let mut scratch = ParsedLine::default();
-    let last_row = self.line_rows(last, &mut scratch) - 1;
+    let last_row = self.line_rows(last) - 1;
     let end = Anchor {
       line: last,
       row: last_row,
@@ -358,25 +392,44 @@ impl Pager {
     self.rewind(end, self.viewport.body_height().saturating_sub(1))
   }
 
-  fn advance(&self, anchor: Anchor, rows: usize) -> Anchor {
-    let mut scratch = ParsedLine::default();
-    scroll::advance(anchor, rows, |line| self.line_rows(line, &mut scratch))
+  fn advance(&mut self, anchor: Anchor, rows: usize) -> Anchor {
+    scroll::advance(anchor, rows, |line| self.line_rows(line))
   }
 
-  fn rewind(&self, anchor: Anchor, rows: usize) -> Anchor {
-    let mut scratch = ParsedLine::default();
-    scroll::rewind(anchor, rows, |line| self.line_rows(line, &mut scratch))
+  fn rewind(&mut self, anchor: Anchor, rows: usize) -> Anchor {
+    scroll::rewind(anchor, rows, |line| self.line_rows(line))
   }
 
-  fn line_rows(&self, line: usize, scratch: &mut ParsedLine) -> usize {
+  fn line_rows(&mut self, line: usize) -> usize {
+    let content_width = self.content_width();
+    let Self {
+      rows_buf,
+      row_cache,
+      opts,
+      ..
+    } = self;
     let Some(raw) = self.buffer.line_bytes(line) else {
       return 1;
     };
 
-    scratch.parse(raw, self.opts.ansi, self.opts.tab_width);
-    match self.opts.wrap {
+    match opts.wrap {
       WrapMode::None => 1,
-      WrapMode::Soft | WrapMode::Hard => scratch.count_rows(self.content_width(), self.opts.wrap),
+      WrapMode::Soft | WrapMode::Hard => {
+        let row_key = RowKey::create(line, content_width, opts.wrap, opts.tab_width, opts.ansi);
+        if let Some((k, rows)) = row_cache
+          && *k == row_key
+        {
+          return *rows;
+        }
+        if raw.len() >= 4 * 1024 {
+          rows_buf.parse(raw, self.opts.ansi, self.opts.tab_width);
+          let rows = rows_buf.count_rows(content_width, self.opts.wrap);
+          self.row_cache = Some((row_key, rows));
+          return rows;
+        }
+        rows_buf.parse(raw, self.opts.ansi, self.opts.tab_width);
+        rows_buf.count_rows(content_width, self.opts.wrap)
+      },
     }
   }
 }

@@ -223,6 +223,13 @@ pub fn verbatim_block(raw: &[u8]) -> Option<&str> {
   (!has_c1_control(raw)).then_some(text)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LineKey {
+  line: usize,
+  ansi: bool,
+  tab: NonZeroUsize,
+}
+
 /// A single logical line of parsed input.
 ///
 /// `text` has no escape sequences, expanded tabs and control bytes rendered as caret notation.
@@ -230,6 +237,7 @@ pub fn verbatim_block(raw: &[u8]) -> Option<&str> {
 pub struct ParsedLine {
   text: String,
   runs: Vec<Run>,
+  source: Option<LineKey>,
 }
 
 impl ParsedLine {
@@ -237,6 +245,7 @@ impl ParsedLine {
   pub fn parse(&mut self, raw: &[u8], ansi_enabled: bool, tab_width: NonZeroUsize) {
     self.text.clear();
     self.runs.clear();
+    self.source = None;
 
     let source = String::from_utf8_lossy(raw);
     let source = source.strip_suffix('\n').unwrap_or(&source);
@@ -268,6 +277,16 @@ impl ParsedLine {
 
     state.parse_text(rest, ansi_enabled, tab_width);
     state.finish();
+  }
+
+  /// Parse `raw` if `line` isn't already parsed.
+  pub fn parse_line(&mut self, raw: &[u8], ansi: bool, tab: NonZeroUsize, line: usize) {
+    let key = LineKey { line, ansi, tab };
+    if self.source == Some(key) {
+      return;
+    }
+    self.parse(raw, ansi, tab);
+    self.source = Some(key);
   }
 
   /// Lazily lay out the display rows of this line as byte ranges into [`ParsedLine::text`].

@@ -47,7 +47,7 @@ impl Pager {
 
       self
         .parsed_buf
-        .parse(raw, self.opts.ansi, self.opts.tab_width);
+        .parse_line(raw, self.opts.ansi, self.opts.tab_width, line);
 
       self.highlight_buf.clear();
       self.collect_highlights(line);
@@ -73,7 +73,7 @@ impl Pager {
           let start_row = if skip == 0 {
             0
           } else {
-            skip.min(self.parsed_buf.count_rows(content_width, self.opts.wrap) - 1)
+            skip.min(self.line_rows(line) - 1)
           };
 
           let rows = self

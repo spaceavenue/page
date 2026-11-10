@@ -3,7 +3,7 @@ use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::text::WrapMode;
+use crate::text::{WrapMode, none_bad};
 
 struct RowBoundary {
   end: usize,
@@ -49,6 +49,51 @@ pub(super) fn row_ranges(
 /// Return the byte range of the next row and the byte offset where the row after it starts. These
 /// differ when whitespace at the break is skipped.
 fn next_row(text: &str, start: usize, width: usize, wrap_mode: WrapMode) -> RowBoundary {
+  next_row_ascii(text, start, width, wrap_mode)
+    .unwrap_or_else(|| next_row_grapheme(text, start, width, wrap_mode))
+}
+
+fn next_row_ascii(
+  text: &str,
+  start: usize,
+  width: usize,
+  wrap_mode: WrapMode,
+) -> Option<RowBoundary> {
+  let Some(rest) = text.get(start..) else {
+    return Some(RowBoundary::new(text.len(), text.len()));
+  };
+
+  if rest.len() <= width {
+    return Some(RowBoundary::new(text.len(), text.len()));
+  }
+
+  let window = rest.as_bytes().get(..width + 1).unwrap_or(rest.as_bytes());
+
+  if !none_bad(window, |b| b.wrapping_sub(0x20) > 0x5e) {
+    return None;
+  }
+
+  if *window.get(width)? == b' ' {
+    return Some(RowBoundary::new(
+      start + width,
+      skip_wrap_spaces(text, start + width),
+    ));
+  }
+
+  if matches!(wrap_mode, WrapMode::Soft)
+    && let Some(p) = memchr::memrchr(b' ', window.get(..width)?)
+  {
+    let break_at = start + p + 1;
+    if word_fits(text, break_at, width) {
+      return Some(RowBoundary::new(break_at, break_at));
+    }
+    return Some(RowBoundary::new(start + width, start + width));
+  }
+
+  Some(RowBoundary::new(start + width, start + width))
+}
+
+fn next_row_grapheme(text: &str, start: usize, width: usize, wrap_mode: WrapMode) -> RowBoundary {
   let mut column = 0usize;
   let mut last_break = None;
   let mut end = start;
@@ -90,7 +135,6 @@ fn next_row(text: &str, start: usize, width: usize, wrap_mode: WrapMode) -> RowB
       last_break = Some(end);
     }
   }
-
   RowBoundary::new(end, end)
 }
 
