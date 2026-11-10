@@ -207,7 +207,7 @@ impl Pager {
       Enter => match Matcher::with_settings(prompt.query(), prompt.settings) {
         Ok(m) => {
           self.search_state.matcher = Some(m);
-          self.search_state.cursor = None;
+          self.search_state.reset();
           self.search_state.settings = prompt.settings;
           self.search_next();
           self.mode = Mode::Normal;

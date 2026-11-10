@@ -6,6 +6,7 @@ use anyhow::bail;
 use clap::{Parser, ValueEnum, value_parser};
 
 use crate::config::options::Options;
+use crate::search::settings::{SearchCase, SearchMode};
 use crate::text::WrapMode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +34,17 @@ enum CliWrap {
   None,
 }
 
+/// CLI choices for `--case` option.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+enum CliCase {
+  #[default]
+  Smart,
+  #[value(name = "match")]
+  Sensitive,
+  #[value(name = "ignore")]
+  Insensitive,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Parser)]
 #[command(version, about, author)]
@@ -41,13 +53,43 @@ struct Args {
   #[arg(short = 'f', long = "follow")]
   follow: bool,
 
-  /// Set line wrapping mode. Conflicts with `--no-wrap`.
+  /// Set line wrapping mode.
   #[arg(short = 'w', long = "wrap", value_enum, conflicts_with = "no_wrap")]
   wrap: Option<CliWrap>,
 
-  /// Alias for --wrap off. Conflicts with `--wrap`.
+  /// Alias for `--wrap off`.
   #[arg(short = 'W', long = "no-wrap")]
   no_wrap: bool,
+
+  /// Set initial search case sensitivity.
+  #[arg(
+    short = 'c',
+    long = "case",
+    conflicts_with = "case_ignore",
+    conflicts_with = "case_match",
+    conflicts_with = "case_smart"
+  )]
+  case: Option<CliCase>,
+
+  /// Alias for `--case ignore`.
+  #[arg(short = 'i')]
+  case_ignore: bool,
+
+  /// Alias for `--case match`.
+  #[arg(short = 's')]
+  case_match: bool,
+
+  /// Alias for `--case smart`.
+  #[arg(short = 'S')]
+  case_smart: bool,
+
+  /// Set initial search mode to regex.
+  #[arg(short = 'e', long = "regex", conflicts_with = "literal")]
+  regex: bool,
+
+  /// Set initial search mode to literal.
+  #[arg(short = 'l', long = "literal", conflicts_with = "regex")]
+  literal: bool,
 
   /// Set tab stop width in columns (1..=256).
   #[arg(short = 't', long = "tab-width", default_value = "8", value_parser = value_parser!(u16).range(1..=256))]
@@ -95,6 +137,30 @@ impl TryFrom<Args> for Cli {
         CliWrap::None => WrapMode::None,
       }
     }
+
+    options.search_settings.mode = if args.regex {
+      SearchMode::Regex
+    } else if args.literal {
+      SearchMode::Substring
+    } else {
+      options.search_settings.mode
+    };
+
+    options.search_settings.case = if args.case_ignore {
+      SearchCase::Insensitive
+    } else if args.case_match {
+      SearchCase::Sensitive
+    } else if args.case_smart {
+      SearchCase::Smart
+    } else if let Some(case) = args.case {
+      match case {
+        CliCase::Smart => SearchCase::Smart,
+        CliCase::Sensitive => SearchCase::Sensitive,
+        CliCase::Insensitive => SearchCase::Insensitive,
+      }
+    } else {
+      options.search_settings.case
+    };
 
     options.tab_width = NonZeroUsize::new(usize::from(args.tab_width)).unwrap_or(NonZeroUsize::MIN);
 

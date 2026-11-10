@@ -14,11 +14,30 @@ pub struct SearchCursor {
   pub top: Anchor,
 }
 
-#[derive(Clone, Debug, Default)]
+/// Bytes per block when skipping lines that cannot contain a match.
+pub const DEFAULT_BLOCK_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Debug)]
 pub struct SearchState {
   pub matcher: Option<Matcher>,
   pub settings: SearchSettings,
   pub cursor: Option<SearchCursor>,
+  /// nothing matches in fully scanned document. dont set when streaming input.
+  pub exhausted: bool,
+  /// bytes per block when skipping lines. test-only.
+  pub block_bytes: usize,
+}
+
+impl Default for SearchState {
+  fn default() -> Self {
+    Self {
+      matcher: None,
+      settings: SearchSettings::default(),
+      cursor: None,
+      exhausted: false,
+      block_bytes: DEFAULT_BLOCK_BYTES,
+    }
+  }
 }
 
 impl SearchState {
@@ -29,6 +48,12 @@ impl SearchState {
       settings,
       ..Self::default()
     }
+  }
+
+  /// Reset the previous matcher's derived values.
+  pub const fn reset(&mut self) {
+    self.cursor = None;
+    self.exhausted = false;
   }
 }
 
@@ -52,8 +77,7 @@ impl Pager {
     let mode = self.search_state.settings.mode.toggled();
     if let Some(matcher) = self.search_state.matcher.as_mut() {
       matcher.with_mode(mode)?;
-      // The old snapshot means nothing to us.
-      self.search_state.cursor = None;
+      self.search_state.reset();
     }
     self.search_state.settings.mode = mode;
     Ok(())
@@ -69,7 +93,7 @@ impl Pager {
     let case = self.search_state.settings.case.next();
     if let Some(matcher) = self.search_state.matcher.as_mut() {
       matcher.with_case(case)?;
-      self.search_state.cursor = None;
+      self.search_state.reset();
     }
     self.search_state.settings.case = case;
     Ok(())
@@ -79,10 +103,13 @@ impl Pager {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+  use crossterm::event::KeyCode::{Char, Enter};
+  use crossterm::event::KeyModifiers;
+
   use crate::config::action::Action;
   use crate::pager::notice::NoticeKind;
   use crate::pager::search::navigate::SearchOutcome::{Found, NotFound};
-  use crate::pager::test_util::{notice, set_query, test_pager};
+  use crate::pager::test_util::{notice, press, set_query, test_pager};
   use crate::search::settings::{SearchCase, SearchMode};
 
   #[test]
@@ -142,5 +169,34 @@ mod tests {
     pager.dispatch(Action::SearchCaseToggle);
     assert_eq!(pager.search_state.settings.case, SearchCase::Insensitive);
     assert_eq!(pager.search_next(), Found);
+  }
+
+  #[test]
+  fn missing_query_is_remembered_until_matcher_changes() {
+    let mut pager = test_pager("hello\n", 80, 3);
+    set_query(&mut pager, "hello");
+    assert_eq!(pager.search_next(), Found);
+    assert!(!pager.search_state.exhausted);
+
+    set_query(&mut pager, "missing");
+    assert_eq!(pager.search_next(), NotFound);
+    assert!(pager.search_state.exhausted);
+    assert_eq!(pager.search_next(), NotFound);
+
+    // every way of replacing the matcher forgets the verdict
+    pager.dispatch(Action::SearchCaseToggle);
+    assert!(!pager.search_state.exhausted);
+
+    assert_eq!(pager.search_next(), NotFound);
+    assert!(pager.search_state.exhausted);
+    pager.toggle_search_mode();
+    assert!(!pager.search_state.exhausted);
+
+    assert_eq!(pager.search_next(), NotFound);
+    pager.dispatch(Action::SearchStart);
+    press(&mut pager, Char('h'), KeyModifiers::NONE);
+    press(&mut pager, Enter, KeyModifiers::NONE);
+    assert!(!pager.search_state.exhausted);
+    assert_eq!(pager.last_match().unwrap().line, 0);
   }
 }

@@ -458,3 +458,94 @@ fn render_range_applies_highlights() {
     );
   }
 }
+
+#[test]
+fn plain_text_only_accepts_lines_parse_would_not_change() {
+  let cases: [(&[u8], bool); 11] = [
+    (b"hello world", true),
+    (b"hello world\n", true),
+    (b"hello world\r\n", true),
+    (b"", true),
+    (b"a\tb", false),
+    (b"\x1b[31mred\x1b[0m", false),
+    (b"bold\x08b", false),
+    (b"caf\xc3\xa9", false),
+    (b"ctrl\x01", false),
+    (b"del\x7f", false),
+    (b"mid\rdle", false),
+  ];
+
+  for (raw, plain) in cases {
+    let text = plain_text(raw);
+    assert_eq!(text.is_some(), plain, "failed on {raw:?}");
+    if let Some(text) = text {
+      // the fast path must agree with the real parser
+      assert_eq!(text, parsed(raw).text(), "failed on {raw:?}");
+    }
+  }
+}
+
+#[test]
+fn verbatim_block_only_accepts_blocks_parse_would_not_change() {
+  // 130 bytes = two 64-byte chunks plus a 2-byte remainder, with `byte` planted at `at`.
+  let planted = |at: usize, byte: u8| {
+    let mut block = vec![b'a'; 130];
+    if let Some(slot) = block.get_mut(at) {
+      *slot = byte;
+    }
+    block
+  };
+  let cases = [
+    (b"hello\nworld\n".to_vec(), true),
+    (b"".to_vec(), true),
+    // accents survive parsing unchanged, so they must not defeat the fast path
+    (b"caf\xc3\xa9\nna\xc3\xafve\n".to_vec(), true),
+    // U+00A0 shares the `C2` lead byte with the C1 controls but is not one
+    (b"nbsp\xc2\xa0\n".to_vec(), true),
+    (b"a\tb\n".to_vec(), false),
+    (b"\x1b[31mred\x1b[0m\n".to_vec(), false),
+    (b"bold\x08b\n".to_vec(), false),
+    (b"del\x7f\n".to_vec(), false),
+    // the `\r` of a CRLF ending is stripped by parse, so it is allowed...
+    (b"crlf\r\nmore\r\n".to_vec(), true),
+    (b"\r\n".to_vec(), true),
+    // ...including when the pair straddles a chunk edge (`\r` at 63, `\n` at 64)
+    (
+      [vec![b'a'; 63], b"\r\n".to_vec(), vec![b'a'; 65]].concat(),
+      true,
+    ),
+    // any other `\r` is shown as `^M`
+    (b"mid\rdle\n".to_vec(), false),
+    (b"doubled\r\r\n".to_vec(), false),
+    (b"unfinished\r".to_vec(), false),
+    (planted(63, b'\r'), false),
+    (planted(129, b'\r'), false),
+    // C1 controls become U+FFFD
+    (b"nel\xc2\x85\n".to_vec(), false),
+    (b"csi\xc2\x9b\n".to_vec(), false),
+    (b"invalid\xff\n".to_vec(), false),
+    // a control byte anywhere, including either side of a chunk edge and in the remainder
+    (planted(0, b'\t'), false),
+    (planted(63, b'\x1b'), false),
+    (planted(64, b'\x1b'), false),
+    (planted(128, b'\t'), false),
+    (planted(129, b'\x7f'), false),
+  ];
+
+  for (raw, verbatim) in cases {
+    let text = verbatim_block(&raw);
+    assert_eq!(text.is_some(), verbatim, "failed on {raw:?}");
+    if let Some(text) = text {
+      // every line in an accepted block must parse to itself
+      for line in text.split_inclusive('\n') {
+        let expected = line.strip_suffix('\n').unwrap_or(line);
+        let expected = expected.strip_suffix('\r').unwrap_or(expected);
+        assert_eq!(
+          parsed(line.as_bytes()).text(),
+          expected,
+          "failed on {line:?}"
+        );
+      }
+    }
+  }
+}

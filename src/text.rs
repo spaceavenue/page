@@ -7,7 +7,7 @@ use std::num::NonZeroUsize;
 use std::ops::Range;
 
 use crossterm::style::Attribute;
-use memchr::memchr;
+use memchr::{memchr, memchr_iter};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -170,6 +170,57 @@ impl<'a> LineBuilder<'a> {
     self.line.text.extend(std::iter::repeat_n(' ', spaces));
     self.column += spaces;
   }
+}
+
+fn none_bad(raw: &[u8], is_bad: impl Fn(u8) -> bool) -> bool {
+  let (chunks, remainder) = raw.as_chunks::<64>();
+  for chunk in chunks {
+    if chunk.iter().fold(0u8, |acc, &b| acc | u8::from(is_bad(b))) != 0 {
+      return false;
+    }
+  }
+  !remainder.iter().any(|&b| is_bad(b))
+}
+
+const fn is_rewritten(byte: u8) -> bool {
+  byte.is_ascii_control() && byte != b'\n' && byte != b'\r'
+}
+
+fn has_stray_cr(block: &[u8]) -> bool {
+  memchr_iter(b'\r', block).any(|at| block.get(at + 1) != Some(&b'\n'))
+}
+
+fn has_c1_control(block: &[u8]) -> bool {
+  memchr_iter(0xC2, block).any(|at| {
+    block
+      .get(at + 1)
+      .is_some_and(|next| (0x80..=0x9f).contains(next))
+  })
+}
+
+/// Parse `raw` into printable text only if it has no tabs, control characters, escape sequences or
+/// non-ASCII bytes.
+#[must_use]
+pub fn plain_text(raw: &[u8]) -> Option<&str> {
+  let line = raw.strip_suffix(b"\n").unwrap_or(raw);
+  let line = line.strip_suffix(b"\r").unwrap_or(line);
+  // printable ASCII is ' '..='~'. wrapping subtraction checks both ends
+  if !none_bad(line, |b| b.wrapping_sub(0x20) > 0x5e) {
+    return None;
+  }
+  // SAFETY: we just checked for all bytes being in 0x20..=0x7e range.
+  Some(unsafe { std::str::from_utf8_unchecked(line) })
+}
+
+/// Parse `raw` into printable text only if [`ParsedLine::parse()`] would leave it unchanged
+/// (valid utf-8, with no control characters apart from `\n` and `\r`).
+#[must_use]
+pub fn verbatim_block(raw: &[u8]) -> Option<&str> {
+  if !none_bad(raw, is_rewritten) || has_stray_cr(raw) {
+    return None;
+  }
+  let text = std::str::from_utf8(raw).ok()?;
+  (!has_c1_control(raw)).then_some(text)
 }
 
 /// A single logical line of parsed input.

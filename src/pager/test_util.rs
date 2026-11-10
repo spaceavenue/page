@@ -27,7 +27,7 @@ pub fn test_pager(doc: &str, width: usize, height: usize) -> Pager {
 
 pub fn set_query(pager: &mut Pager, query: &str) {
   pager.search_state.matcher = Some(Matcher::new(query).unwrap());
-  pager.search_state.cursor = None;
+  pager.search_state.reset();
 }
 
 pub fn numbered_doc(count: usize, at: &[usize], extra: &str) -> String {

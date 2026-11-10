@@ -169,6 +169,18 @@ impl Buffer {
     })
   }
 
+  /// Read newly arrived data from the background stdin reader.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if an I/O error occurred while reading from stdin.
+  pub fn read_from_stdin(&mut self) -> anyhow::Result<bool> {
+    let BufferSource::Stream(stream) = &mut self.source else {
+      return Ok(false);
+    };
+    stream.read_chunk()
+  }
+
   fn spawn_stdin_reader(
     data_tx: SyncSender<io::Result<Vec<u8>>>,
     vec_rx: Receiver<Vec<u8>>,
@@ -201,18 +213,6 @@ impl Buffer {
     Ok(())
   }
 
-  /// Read newly arrived data from the background stdin reader.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if an I/O error occurred while reading from stdin.
-  pub fn read_from_stdin(&mut self) -> anyhow::Result<bool> {
-    let BufferSource::Stream(stream) = &mut self.source else {
-      return Ok(false);
-    };
-    stream.read_chunk()
-  }
-
   /// Check if buffer is streaming data from stdin.
   #[must_use]
   pub const fn is_streaming(&self) -> bool {
@@ -228,7 +228,7 @@ impl Buffer {
     !self.is_streaming() && self.scanned >= self.source.len()
   }
 
-  /// Index till at least the `target` line.
+  /// Index till at least the `target_line`.
   pub fn index_till_line(&mut self, target_line: usize) {
     if self.line_offsets.len() > target_line {
       return;
@@ -239,6 +239,29 @@ impl Buffer {
     for pos in memchr_iter(b'\n', bytes.get(start..).unwrap_or(&[])) {
       self.line_offsets.push(start + pos);
       if self.line_offsets.len() > target_line {
+        self.scanned = start + pos + 1;
+        return;
+      }
+    }
+
+    self.scanned = bytes.len();
+  }
+
+  /// Index till at least the first newline at or past `target_byte`.
+  pub fn index_till_byte(&mut self, target_byte: usize) {
+    if self
+      .line_offsets
+      .last()
+      .is_some_and(|&offset| offset >= target_byte)
+    {
+      return;
+    }
+
+    let bytes = &self.source;
+    let start = self.scanned;
+    for pos in memchr_iter(b'\n', bytes.get(start..).unwrap_or(&[])) {
+      self.line_offsets.push(start + pos);
+      if start + pos >= target_byte {
         self.scanned = start + pos + 1;
         return;
       }
@@ -280,10 +303,31 @@ impl Buffer {
     self.source.get(line_range)
   }
 
+  /// Indexes and returns lines starting from `from` covering about `budget` bytes.
+  pub fn block_range(&mut self, from: usize, budget: usize) -> Option<Range<usize>> {
+    self.index_till_line(from);
+    if from >= self.line_offsets.len() {
+      return None;
+    }
+    let start = self.line_range(from)?.start;
+    self.index_till_byte(start + budget);
+    let end = (self.line_offsets.partition_point(|nl| *nl < start + budget) + 1)
+      .min(self.line_offsets.len());
+    Some(from..end)
+  }
+
+  pub fn block_bytes(&mut self, from: usize, budget: usize) -> Option<(Range<usize>, &[u8])> {
+    let lines = self.block_range(from, budget)?;
+    let start = self.line_range(lines.start)?.start;
+    let end = self.line_offsets.get(lines.end.checked_sub(1)?)? + 1;
+    Some((lines, self.source.get(start..end)?))
+  }
+
   #[cfg(test)]
   pub fn from_bytes(contents: &[u8]) -> Self {
+    let contents = contents.to_vec();
     Self {
-      source: BufferSource::Heap(contents.to_vec()),
+      source: BufferSource::Heap(contents),
       line_offsets: Vec::new(),
       scanned: 0,
     }
@@ -295,12 +339,7 @@ mod tests {
   use super::*;
 
   fn buffer_from(contents: &[u8]) -> Buffer {
-    let contents = contents.to_vec();
-    Buffer {
-      source: BufferSource::Heap(contents),
-      line_offsets: Vec::new(),
-      scanned: 0,
-    }
+    Buffer::from_bytes(contents)
   }
 
   #[test]
@@ -356,5 +395,51 @@ mod tests {
     assert!(!buf.is_streaming());
     assert!(buf.is_fully_indexed());
     assert_eq!(buf.line_count(), 2);
+  }
+
+  #[test]
+  fn blocks_tile_terminated_lines_without_gaps_or_overlap() {
+    let long_line = [vec![b'x'; 100], b"\nshort\n".to_vec()].concat();
+    let docs: [&[u8]; 6] = [
+      b"",
+      b"one\n",
+      b"\n\n\n",
+      b"a\nbb\nccc\ndddd\n",
+      // the last line has no newline, so it is never part of a block
+      b"one\ntwo\nthree",
+      // a single line longer than any budget still has to be returned, or callers loop forever
+      &long_line,
+    ];
+
+    for contents in docs {
+      for budget in [0, 1, 2, 5, 64] {
+        let mut buf = buffer_from(contents);
+        let mut next = 0;
+        let mut rebuilt = Vec::new();
+        while let Some((lines, bytes)) = buf.block_bytes(next, budget) {
+          assert_eq!(
+            lines.start, next,
+            "gap or overlap: {contents:?}, budget {budget}"
+          );
+          assert!(
+            lines.end > lines.start,
+            "no progress: {contents:?}, budget {budget}"
+          );
+          rebuilt.extend_from_slice(bytes);
+          next = lines.end;
+        }
+
+        // together the blocks are everything up to the last newline, and nothing after it
+        let terminated = contents
+          .iter()
+          .rposition(|&b| b == b'\n')
+          .map_or(0, |at| at + 1);
+        assert_eq!(
+          rebuilt.as_slice(),
+          contents.get(..terminated).unwrap_or_default(),
+          "{contents:?}, budget {budget}"
+        );
+      }
+    }
   }
 }

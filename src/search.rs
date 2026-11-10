@@ -2,7 +2,7 @@ pub mod settings;
 
 use std::ops::Range;
 
-use memchr::memmem;
+use memchr::memmem::Finder;
 use regex::{Regex, RegexBuilder};
 
 use crate::search::settings::{SearchCase, SearchMode, SearchSettings};
@@ -18,8 +18,9 @@ pub enum SearchDirection {
 }
 
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 enum Kind {
-  Substring(Vec<u8>),
+  Substring(Finder<'static>),
   Regex(Regex),
 }
 
@@ -33,7 +34,7 @@ impl Kind {
           .build()?;
         Self::Regex(regex)
       },
-      SearchMode::Substring => Self::Substring(query.as_bytes().to_vec()),
+      SearchMode::Substring => Self::Substring(Finder::new(query).into_owned()),
       SearchMode::Regex => {
         let regex = RegexBuilder::new(query)
           .case_insensitive(is_case_insensitive)
@@ -137,13 +138,17 @@ impl Matcher {
   /// Find all non-overlapping matches in `text`.
   pub fn find_iter<'r, 't>(&'r self, text: &'t str) -> Matches<'r, 't> {
     match &self.kind {
-      Kind::Substring(needle) => Matches::Substring {
+      Kind::Substring(finder) => Matches::Substring {
         text,
-        needle,
+        finder,
         pos: 0,
       },
       Kind::Regex(regex) => Matches::Regex(regex.find_iter(text)),
     }
+  }
+
+  pub const fn can_skip_blocks(&self) -> bool {
+    matches!(self.settings.mode, SearchMode::Substring)
   }
 }
 
@@ -151,7 +156,7 @@ impl Matcher {
 pub enum Matches<'r, 't> {
   Substring {
     text: &'t str,
-    needle: &'r [u8],
+    finder: &'r Finder<'static>,
     pos: usize,
   },
   Regex(regex::Matches<'r, 't>),
@@ -162,16 +167,16 @@ impl Iterator for Matches<'_, '_> {
 
   fn next(&mut self) -> Option<Self::Item> {
     match self {
-      Self::Substring { text, needle, pos } => {
+      Self::Substring { text, finder, pos } => {
         let hit = {
           let from = *pos;
           if from > text.len() || !text.is_char_boundary(from) {
             return None;
           }
           let haystack = text.as_bytes().get(from..)?;
-          let offset = memmem::find(haystack, needle)?;
+          let offset = finder.find(haystack)?;
           let start = from + offset;
-          Some(start..start + needle.len())
+          Some(start..start + finder.needle().len())
         }?;
         *pos = hit.end;
         Some(hit)
