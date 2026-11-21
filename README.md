@@ -2,11 +2,33 @@
 
 A simple, modern terminal pager written in Rust.
 
+## Features
+
+- Full ANSI SGR styling. Supporting bold, dim, italic, underline, reverse, 16 standard colors, 256-color palette, and 24-bit RGB truecolor. Styling is tracked across wrapped screen rows.
+- Full Unicode support with proper column width calculation, including CJK characters and emoji. Supports soft (breaking on whitespace boundaries) and hard wrapping, as well as configurable tab stops.
+- "No-wrap" mode to disable wrapping with support for horizontal scrolling.
+- Line numbers in the gutter and a help screen to show keymap.
+- Regex and Substring (default) searching with Smart (default), Sensitive and Insensitive case, and search highlighting.
+
 ## Installation
 
 ### Prerequisites
 
 - [Rust](https://www.rust-lang.org/tools/install) (2024 edition)
+
+### Installing
+
+Install directly into `~/.cargo/bin` (or wherever `$CARGO_HOME/bin` is):
+
+```bash
+cargo install --git https://github.com/spaceavenue/page.git
+```
+
+Or inside a cloned repo:
+
+```bash
+cargo install --path .
+```
 
 ### Building
 
@@ -22,12 +44,10 @@ cargo build --release
 target/release/page --help
 ```
 
-### Installing
-
-To install `page` directly into your `~/.cargo/bin` (or wherever `$CARGO_HOME/bin` is):
+### Testing
 
 ```bash
-cargo install --path .
+cargo test
 ```
 
 ## Usage
@@ -54,8 +74,8 @@ page -N source_code.rs
 # Chop long lines and scroll horizontally
 page -W long_lines.txt
 
-# Disable ANSI color escape processing
-page -R styled_output.txt
+# Disable ANSI escape processing
+page --no-ansi styled_output.txt
 
 # Custom tab width
 page --tab-width 4 source_code.rs
@@ -63,52 +83,44 @@ page --tab-width 4 source_code.rs
 
 ### Command-Line Options
 
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--follow` | `-f` | Follow mode (scroll as new input arrives on stdin) | `false` |
-| `--wrap <MODE>` | `-w` | Line wrap strategy: `soft` (word boundary), `hard`, or `off` | `soft` |
-| `--no-wrap` | `-W` | Alias for `--wrap off` | `false` |
-| `--no-ansi` | `-R` | Disable interpretation of ANSI/SGR escape codes | `false` (ANSI enabled) |
-| `--line-numbers` | `-N` | Show a line-number gutter | `false` |
-| `--tab-width <N>` | `-t` | Number of columns between tab stops (1–256) | `8` |
-| `--help` | `-h` | Print help information | - |
+|Short| Long              | Description                                                  | Default |
+|-----|-------------------|--------------------------------------------------------------|---------|
+|`-f` | `--follow`        | Follow mode (scroll as new input arrives on stdin)           | `false` |
+|`-w` | `--wrap <MODE>`   | Line wrap strategy: `soft` (word boundary), `hard`, or `off` | `soft`  |
+|`-W` | `--no-wrap`       | Alias for `--wrap off`                                       | `false` |
+|     | `--no-ansi`       | Disable ANSI/SGR escape codes parsing                        | `false` |
+|`-N` | `--line-numbers`  | Show line numbers in gutter                                  | `false` |
+|`-t` | `--tab-width <N>` | Number of columns between tab stops (1–256)                  | `8`     |
+|`-c` | `--case <CASE>`   | Case sensitivity of the search: `smart`, `match`, `ignore`   | `smart` |
+|`-s` | `--case match`    | Alias for `--case match`                                     | -       |
+|`-i` | `--case ignore`   | Alias for `--case ignore`                                    | -       |
+|`-S` | `--case smart`    | Alias for `--case smart`                                     | -       |
+|`-e` | `--regex`         | Set initial search mode to regex                             | `false` |
+|`-l` | `--literal`       | Set initial search mode to literal                           | `true`  |
+|`-h` | `--help`          | Print help                                                   | -       |
 
-## Keybinds
+### Keybinds
 
-| Key | Action | Description |
-|-----|--------|-------------|
-| `j` / `Down` / `Enter` | `LineDown` | Scroll down by one row |
-| `k` / `Up` | `LineUp` | Scroll up by one row |
-| `Ctrl-D` | `HalfPageDown` | Scroll down by half a page |
-| `Ctrl-U` | `HalfPageUp` | Scroll up by half a page |
-| `Space` / `PageDown` / `Ctrl-F` | `PageDown` | Scroll down by one full page |
-| `PageUp` / `Ctrl-B` | `PageUp` | Scroll up by one full page |
-| `g` / `Home` | `GotoTop` | Jump to the very beginning of the document |
-| `G` / `End` | `GotoBottom` | Jump to the end of the document |
-| `Left` / `Right` | `ScrollLeft` / `ScrollRight` | Move horizontally in chop mode |
-| `0` | `ScrollHome` | Reset horizontal scroll |
-| `h` / `?` | `Help` | Show the keymap |
-| `q` / `Esc` / `Ctrl-C` | `Quit` | Exit the pager |
-
-## Testing
-
-```bash
-cargo test
-```
-
-## Features
-
-- **Full ANSI & Truecolor Styling:** SGR parser supporting bold, dim, italic, underline, reverse video, 16 standard colors, 256-color palette, and 24-bit RGB truecolor. Active styling is tracked across wrapped screen rows.
-- **Unicode & Smart Word Wrapping:** Proper column width calculation (including CJK fullwidth characters and emoji). Supports soft (breaking on whitespace boundaries) and hard wrapping, as well as configurable tab stops.
-- **No-wrap mode with horizontal scrolling:** Disable wrapping. The left/right arrows move the visible column window.
-- **Line numbers and a help screen:** Line numbers in the gutter and a help screen to show keymap.
-- **Search Capabilities:** Both Regex and Substring (default) searching, with Smart (default), Sensitive and Insensitive case and search highlighting.
----
+| Key                             | Action                        |
+|---------------------------------|-------------------------------|
+| `j` / `Down` / `Enter`          | Scroll down one row           |
+| `k` / `Up`                      | Scroll up one row             |
+| `Ctrl-D`                        | Scroll down half a page       |
+| `Ctrl-U`                        | Scroll up half a page         |
+| `Space` / `PageDown` / `Ctrl-F` | Scroll down one page          |
+| `PageUp` / `Ctrl-B`             | Scroll up one page            |
+| `g` / `Home`                    | Jump to beginning of document |
+| `G` / `End`                     | Jump to end of document       |
+| `Left` / `Right`                | Scroll left/right (no-wrap)   |
+| `0`                             | Reset horizontal scroll       |
+| `/`                             | Start search                  |
+| `h` / `?`                       | Show the keymap               |
+| `q` / `Esc` / `Ctrl-C`          | Exit the pager                |
 
 ## Architecture
 
-- **`buffer`**: Owns data sources (memory-mapped files $\ge$ 64 KiB, heap buffer for small files, streaming background reader for `stdin`). Manages lazy newline index vectors.
-- **`text`**: Applies tab expansion, Unicode display widths, lazy row iteration, wrapping and styling, to create a `ParsedLine`.
+- **`buffer`**: Owns data sources (memory-mapped files >= 64 KiB, heap buffer for small files, streaming background reader for `stdin`). Manages lazy newline index vectors.
+- **`text`**: Applies tab expansion, Unicode display widths, lazy row iteration, wrapping and styling to create a `ParsedLine`.
   - `text::reader`: Zero-copy cursor over `&str`.
   - `text::ansi`: ECMA-48 SGR parameter parser emitting color and attribute changes.
   - `text::wrap`: Line wrapping implementation.

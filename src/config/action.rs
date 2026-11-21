@@ -72,7 +72,7 @@ keymap! {
     ScrollLeft       => [Left],
     ScrollRight      => [Right],
     ScrollHome       => ['0'],
-    SearchStart      => ['/', CONTROL + 'f'],
+    SearchStart      => ['/'],
     SearchForward    => ['n'],
     SearchBackward   => ['N'],
     SearchModeToggle => [ALT + 'r'],

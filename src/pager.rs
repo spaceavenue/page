@@ -25,8 +25,9 @@ use crate::text::{Highlight, ParsedLine, WrapMode};
 use crate::ui::viewport::Viewport;
 
 const STREAM_POLL_INTERVAL: Duration = Duration::from_millis(16);
+const MAX_EVENTS_PER_FRAME: i32 = 64;
 
-const HELP: &str = r"page-rs keys,
+const HELP: &str = r"page-rs
 
   j / Down / Enter       line down
   k / Up                 line up
@@ -156,9 +157,12 @@ impl Pager {
         self.clean();
       }
       let timeout = self.next_wakeup(Instant::now());
-      let ready = timeout.map_or(Ok(true), event::poll)?;
-      if ready {
+      let mut ready = timeout.map_or(Ok(true), event::poll)?;
+      let mut handled = 0;
+      while ready && self.running && handled < MAX_EVENTS_PER_FRAME {
         self.handle_event(event::read()?);
+        handled += 1;
+        ready = event::poll(Duration::ZERO)?;
       }
     }
 

@@ -2,8 +2,8 @@ use std::io::IsTerminal;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
-use anyhow::bail;
-use clap::{Parser, ValueEnum, value_parser};
+use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser, ValueEnum, value_parser};
 
 use crate::config::options::Options;
 use crate::search::settings::{SearchCase, SearchMode};
@@ -96,7 +96,7 @@ struct Args {
   tab_width: u16,
 
   /// Turn ANSI SGR escape sequence parsing off.
-  #[arg(short = 'R', long = "no-ansi")]
+  #[arg(long = "no-ansi")]
   no_ansi: bool,
 
   /// Show line numbers in gutter.
@@ -115,16 +115,13 @@ pub struct Cli {
   pub options: Options,
 }
 
-impl TryFrom<Args> for Cli {
-  type Error = anyhow::Error;
-
-  fn try_from(args: Args) -> Result<Self, Self::Error> {
+impl From<Args> for Cli {
+  fn from(args: Args) -> Self {
     let mut options = Options::default();
 
     let input = match args.file {
       Some(p) if p.as_os_str() == "-" => Input::Stdin,
       Some(p) => Input::Path(p),
-      None if std::io::stdin().is_terminal() => bail!("missing filename or piped input."),
       None => Input::Stdin,
     };
 
@@ -168,18 +165,23 @@ impl TryFrom<Args> for Cli {
     options.ansi = !args.no_ansi;
     options.line_numbers = args.line_numbers;
 
-    Ok(Self { input, options })
+    Self { input, options }
   }
 }
 
 impl Cli {
   /// Parse command-line arguments from `std::env::args_os`.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if any arguments fail to parse or are invalid.
-  pub fn parse() -> anyhow::Result<Self> {
-    Self::try_from(Args::parse())
+  pub fn parse() -> Self {
+    let args = Args::parse();
+    if args.file.is_none() && std::io::stdin().is_terminal() {
+      Args::command()
+        .error(
+          ErrorKind::MissingRequiredArgument,
+          "missing FILE or piped input",
+        )
+        .exit();
+    }
+    Self::from(args)
   }
 }
 
@@ -205,7 +207,7 @@ mod tests {
   {
     let args = iter::once(String::from("page")).chain(args.into_iter().map(Into::into));
     let args = Args::try_parse_from(args)?;
-    Cli::try_from(args)
+    Ok(Cli::from(args))
   }
 
   #[test]
