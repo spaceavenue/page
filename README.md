@@ -83,21 +83,22 @@ page --tab-width 4 source_code.rs
 
 ### Command-Line Options
 
-|Short| Long              | Description                                                  | Default |
-|-----|-------------------|--------------------------------------------------------------|---------|
-|`-f` | `--follow`        | Follow mode (scroll as new input arrives on stdin)           | `false` |
-|`-w` | `--wrap <MODE>`   | Line wrap strategy: `soft` (word boundary), `hard`, or `off` | `soft`  |
-|`-W` | `--no-wrap`       | Alias for `--wrap off`                                       | `false` |
-|     | `--no-ansi`       | Disable ANSI/SGR escape codes parsing                        | `false` |
-|`-N` | `--line-numbers`  | Show line numbers in gutter                                  | `false` |
-|`-t` | `--tab-width <N>` | Number of columns between tab stops (1–256)                  | `8`     |
-|`-c` | `--case <CASE>`   | Case sensitivity of the search: `smart`, `match`, `ignore`   | `smart` |
-|`-s` | `--case match`    | Alias for `--case match`                                     | -       |
-|`-i` | `--case ignore`   | Alias for `--case ignore`                                    | -       |
-|`-S` | `--case smart`    | Alias for `--case smart`                                     | -       |
-|`-e` | `--regex`         | Set initial search mode to regex                             | `false` |
-|`-l` | `--literal`       | Set initial search mode to literal                           | `true`  |
-|`-h` | `--help`          | Print help                                                   | -       |
+| Short | Long              | Description                                                  | Default |
+|-------|-------------------|--------------------------------------------------------------|---------|
+| `-f`  | `--follow`        | Follow mode (scroll as new input arrives on stdin)           | `false` |
+| `-w`  | `--wrap <MODE>`   | Line wrap strategy: `soft` (word boundary), `hard`, or `off` | `soft`  |
+| `-W`  | `--no-wrap`       | Alias for `--wrap off`                                       | `false` |
+|       | `--no-ansi`       | Disable ANSI/SGR escape codes parsing                        | `false` |
+| `-N`  | `--line-numbers`  | Show line numbers in gutter                                  | `false` |
+| `-F`  | `--print-if-fits` | Print directly to terminal if input fits                     | `false` |
+| `-t`  | `--tab-width <N>` | Number of columns between tab stops (1–256)                  | `8`     |
+| `-c`  | `--case <CASE>`   | Case sensitivity of the search: `smart`, `match`, `ignore`   | `smart` |
+| `-s`  | `--case match`    | Alias for `--case match`                                     | -       |
+| `-i`  | `--case ignore`   | Alias for `--case ignore`                                    | -       |
+| `-S`  | `--case smart`    | Alias for `--case smart`                                     | -       |
+| `-e`  | `--regex`         | Set initial search mode to regex                             | `false` |
+| `-l`  | `--literal`       | Set initial search mode to literal                           | `true`  |
+| `-h`  | `--help`          | Print help                                                   | -       |
 
 ### Keybinds
 

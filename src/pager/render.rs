@@ -1,15 +1,18 @@
-use std::io::{self};
+use std::io::{self, Write};
 
 use crossterm::cursor::{MoveTo, SetCursorStyle};
 use crossterm::queue;
-use crossterm::style::{Attributes, Print, ResetColor, SetForegroundColor};
+use crossterm::style::{Attributes, Color, Print, ResetColor, SetForegroundColor};
 use crossterm::terminal::{Clear, ClearType};
 
 use super::mode::Mode;
 use super::{HELP, Pager};
+use crate::buffer::Buffer;
+use crate::config::options::Options;
 use crate::search::SearchError;
 use crate::text::ansi::Style;
-use crate::text::{Highlight, WrapMode};
+use crate::text::{Highlight, ParsedLine, WrapMode};
+use crate::ui::viewport::Viewport;
 use crate::ui::{BarContent, StatusContext, display_width};
 
 const SEP: &str = "/";
@@ -57,7 +60,7 @@ impl Pager {
           let window = self.parsed_buf.column_window(self.left, content_width);
           let cursor_row = u16::try_from(screen_row)?;
           queue!(out, MoveTo(0, cursor_row), Clear(ClearType::CurrentLine))?;
-          self.render_gutter(out, line, true, gutter)?;
+          render_gutter(out, line, true, gutter, self.opts.ui.theme.gutter_fg)?;
           if window.pad > 0 {
             queue!(
               out,
@@ -86,7 +89,7 @@ impl Pager {
             let cursor_row = u16::try_from(screen_row)?;
             queue!(out, MoveTo(0, cursor_row), Clear(ClearType::CurrentLine))?;
             let first_row = start_row == 0 && offset == 0;
-            self.render_gutter(out, line, first_row, gutter)?;
+            render_gutter(out, line, first_row, gutter, self.opts.ui.theme.gutter_fg)?;
             self
               .parsed_buf
               .render_range(out, range, &self.highlight_buf)?;
@@ -112,32 +115,6 @@ impl Pager {
     }
 
     self.render_status(out)?;
-    Ok(())
-  }
-
-  fn render_gutter(
-    &self,
-    out: &mut impl io::Write,
-    line: usize,
-    first_row: bool,
-    gutter: usize,
-  ) -> anyhow::Result<()> {
-    if gutter == 0 {
-      return Ok(());
-    }
-
-    if first_row {
-      let number_width = gutter - 1;
-      queue!(
-        out,
-        SetForegroundColor(self.opts.ui.theme.gutter_fg),
-        Print(format_args!("{:>number_width$} ", line + 1)),
-        ResetColor
-      )?;
-    } else {
-      queue!(out, Print(format_args!("{:width$}", "", width = gutter)))?;
-    }
-
     Ok(())
   }
 
@@ -246,6 +223,71 @@ impl Pager {
         }));
     }
   }
+}
+
+/// Print all of `buffer` to `out`, without entering the alternate terminal screen.
+///
+/// # Errors
+///
+/// Returns an error if writing to `out` fails.
+pub fn print_screen(
+  buffer: &Buffer,
+  opts: &Options,
+  viewport: Viewport,
+  out: &mut impl Write,
+) -> anyhow::Result<()> {
+  let gutter = viewport.gutter_width(opts.line_numbers, buffer.line_count());
+  let width = viewport.content_width(gutter);
+  let gutter_fg = opts.ui.theme.gutter_fg;
+  let mut parse_buf = ParsedLine::default();
+
+  for line in 0..buffer.line_count() {
+    let Some(raw) = buffer.line_bytes(line) else {
+      break;
+    };
+    parse_buf.parse(raw, opts.ansi, opts.tab_width);
+
+    if opts.wrap == WrapMode::None {
+      render_gutter(out, line, true, gutter, gutter_fg)?;
+      parse_buf.render_range(out, 0..parse_buf.text().len(), &[])?;
+      writeln!(out)?;
+    } else {
+      for (index, row) in parse_buf.rows(width, opts.wrap).enumerate() {
+        render_gutter(out, line, index == 0, gutter, gutter_fg)?;
+        parse_buf.render_range(out, row, &[])?;
+        writeln!(out)?;
+      }
+    }
+  }
+
+  out.flush()?;
+  Ok(())
+}
+
+fn render_gutter(
+  out: &mut impl io::Write,
+  line: usize,
+  first_row: bool,
+  gutter: usize,
+  fg: Color,
+) -> anyhow::Result<()> {
+  if gutter == 0 {
+    return Ok(());
+  }
+
+  if first_row {
+    let number_width = gutter - 1;
+    queue!(
+      out,
+      SetForegroundColor(fg),
+      Print(format_args!("{:>number_width$} ", line + 1)),
+      ResetColor
+    )?;
+  } else {
+    queue!(out, Print(format_args!("{:width$}", "", width = gutter)))?;
+  }
+
+  Ok(())
 }
 
 fn hide_cursor(out: &mut impl io::Write) -> anyhow::Result<()> {

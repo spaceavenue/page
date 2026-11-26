@@ -21,6 +21,9 @@ const STDIN_CHUNK: usize = 64 * 1024;
 /// How much to stream ahead of current line before blocking the pipe.
 const STDIN_QUEUE: usize = 32;
 
+/// Bytes to bound `Buffer::wait_for_lines`.
+const WAIT_BYTE_CAP: usize = 1024 * 1024;
+
 enum BufferSource {
   Mmap(Mmap),
   Heap(Vec<u8>),
@@ -42,6 +45,12 @@ impl StreamBuffer {
     self.stream.is_some()
   }
 
+  fn accept_chunk(data: &mut Vec<u8>, vec_tx: &SyncSender<Vec<u8>>, mut chunk: Vec<u8>) {
+    data.extend_from_slice(&chunk);
+    chunk.clear();
+    let _ = vec_tx.try_send(chunk);
+  }
+
   fn read_chunk(&mut self) -> anyhow::Result<bool> {
     let Some(stream) = self.stream.as_mut() else {
       return Ok(false);
@@ -50,11 +59,9 @@ impl StreamBuffer {
     let mut received = false;
     loop {
       match stream.data_rx.try_recv() {
-        Ok(Ok(mut chunk)) => {
-          self.data.extend_from_slice(&chunk);
+        Ok(Ok(chunk)) => {
+          Self::accept_chunk(&mut self.data, &stream.vec_tx, chunk);
           received = true;
-          chunk.clear();
-          let _ = stream.vec_tx.try_send(chunk);
         },
         Ok(Err(e)) => {
           self.stream = None;
@@ -67,8 +74,28 @@ impl StreamBuffer {
         },
       }
     }
-
     Ok(received)
+  }
+
+  fn read_chunk_blocking(&mut self) -> anyhow::Result<bool> {
+    let Some(stream) = self.stream.as_mut() else {
+      return Ok(false);
+    };
+
+    match stream.data_rx.recv() {
+      Ok(Ok(chunk)) => {
+        Self::accept_chunk(&mut self.data, &stream.vec_tx, chunk);
+        Ok(true)
+      },
+      Ok(Err(e)) => {
+        self.stream = None;
+        Err(e).context("error reading from stdin")
+      },
+      Err(_) => {
+        self.stream = None;
+        Ok(false)
+      },
+    }
   }
 }
 
@@ -226,6 +253,23 @@ impl Buffer {
   #[must_use]
   pub fn is_fully_indexed(&self) -> bool {
     !self.is_streaming() && self.scanned >= self.source.len()
+  }
+
+  /// Wait for `lines` number of lines to arrive on a streaming source.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if reading from stream fails.
+  pub fn wait_for_lines(&mut self, lines: usize) -> anyhow::Result<()> {
+    loop {
+      self.index_till_line(lines.saturating_sub(1));
+      if self.line_count() >= lines || !self.is_streaming() || self.source.len() > WAIT_BYTE_CAP {
+        return Ok(());
+      }
+      if let BufferSource::Stream(stream) = &mut self.source {
+        stream.read_chunk_blocking()?;
+      }
+    }
   }
 
   /// Index till at least the `target_line`.

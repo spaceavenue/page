@@ -1,3 +1,4 @@
+use std::env;
 use std::io::IsTerminal;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -103,6 +104,10 @@ struct Args {
   #[arg(short = 'N', long = "line-numbers", default_value = "false")]
   line_numbers: bool,
 
+  /// If input fits within terminal, print directly.
+  #[arg(short = 'F', long = "print-if-fits")]
+  print_if_fits: bool,
+
   /// File to display, or '-' for stdin.
   #[arg(value_name = "FILE")]
   file: Option<PathBuf>,
@@ -118,6 +123,11 @@ pub struct Cli {
 impl From<Args> for Cli {
   fn from(args: Args) -> Self {
     let mut options = Options::default();
+
+    let less_env = env::var("LESS").unwrap_or_default();
+    if !less_env.is_empty() && less_env.chars().any(|c| c == 'F') {
+      options.print_if_fits = true;
+    }
 
     let input = match args.file {
       Some(p) if p.as_os_str() == "-" => Input::Stdin,
@@ -164,6 +174,7 @@ impl From<Args> for Cli {
     options.initial_follow = args.follow;
     options.ansi = !args.no_ansi;
     options.line_numbers = args.line_numbers;
+    options.print_if_fits = (options.print_if_fits || args.print_if_fits) && !args.follow;
 
     Self { input, options }
   }

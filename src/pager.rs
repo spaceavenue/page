@@ -18,6 +18,7 @@ use crate::config::options::Options;
 use crate::pager::mode::Mode;
 use crate::pager::notice::Notice;
 use crate::pager::prompt::SearchPrompt;
+pub use crate::pager::render::print_screen;
 use crate::pager::search::SearchState;
 use crate::scroll::{self, Anchor};
 use crate::search::Matcher;
