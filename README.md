@@ -118,6 +118,30 @@ page --tab-width 4 source_code.rs
 | `h` / `?`                       | Show the keymap               |
 | `q` / `Esc` / `Ctrl-C`          | Exit the pager                |
 
+### `$LESS` Compatibility
+
+Programs like `git` and `journalctl` commonly configure `less` through the `$LESS` environment variable, so `page` parses it to offer basic `less` compatibility as well. This allows using `PAGER=page` to *some* extent.
+
+This does mean there's a disconnect between the CLI options (as in `LESS=S page` != `page -S`). This is a deliberate compromise for compatibility sake, don't rely on it.
+
+Only supported CLI actions are handled, rest are ignored silently. More may be available in the future. Below is a table of the options and effects.
+
+| In `$LESS` | Long form              | Effect in `page`                                   |
+|------------|------------------------|----------------------------------------------------|
+| `F`        | `--quit-if-one-screen` | Print and exit if the input fits                   |
+| `N`        | `--LINE-NUMBERS`       | Show line numbers                                  |
+| `S`        | `--chop-long-lines`    | Do not wrap long lines                             |
+| `i`        | `--ignore-case`        | Smart-case search                                  |
+| `I`        | `--IGNORE-CASE`        | Case-insensitive search                            |
+| `x<n>`     | `--tabs=<n>`           | Tab width of `n` (1–256). Only the first of a list |
+
+Some limitations:
+
+- Startup commands (`+F`, `+G`, ...) are skipped.
+- Resetting an option with `-+` is not supported.
+- Long options must be written in full. Abbreviations are not recognized.
+- Command-line flags take precedence over `$LESS`. There are no flags to turn line numbers or print-if-fits off (though `--follow` always disables print-if-fits).
+
 ## Architecture
 
 - **`buffer`**: Owns data sources (memory-mapped files >= 64 KiB, heap buffer for small files, streaming background reader for `stdin`). Manages lazy newline index vectors.

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser, ValueEnum, value_parser};
 
+use crate::config::less;
 use crate::config::options::Options;
 use crate::search::settings::{SearchCase, SearchMode};
 use crate::text::WrapMode;
@@ -93,8 +94,8 @@ struct Args {
   literal: bool,
 
   /// Set tab stop width in columns (1..=256).
-  #[arg(short = 't', long = "tab-width", default_value = "8", value_parser = value_parser!(u16).range(1..=256))]
-  tab_width: u16,
+  #[arg(short = 't', long = "tab-width", value_parser = value_parser!(u16).range(1..=256))]
+  tab_width: Option<u16>,
 
   /// Turn ANSI SGR escape sequence parsing off.
   #[arg(long = "no-ansi")]
@@ -123,11 +124,7 @@ pub struct Cli {
 impl From<Args> for Cli {
   fn from(args: Args) -> Self {
     let mut options = Options::default();
-
-    let less_env = env::var("LESS").unwrap_or_default();
-    if !less_env.is_empty() && less_env.chars().any(|c| c == 'F') {
-      options.print_if_fits = true;
-    }
+    less::apply(&mut options, &env::var("LESS").unwrap_or_default());
 
     let input = match args.file {
       Some(p) if p.as_os_str() == "-" => Input::Stdin,
@@ -169,11 +166,13 @@ impl From<Args> for Cli {
       options.search_settings.case
     };
 
-    options.tab_width = NonZeroUsize::new(usize::from(args.tab_width)).unwrap_or(NonZeroUsize::MIN);
+    if let Some(tab_width) = args.tab_width {
+      options.tab_width = NonZeroUsize::new(usize::from(tab_width)).unwrap_or(NonZeroUsize::MIN);
+    }
 
     options.initial_follow = args.follow;
     options.ansi = !args.no_ansi;
-    options.line_numbers = args.line_numbers;
+    options.line_numbers |= args.line_numbers;
     options.print_if_fits = (options.print_if_fits || args.print_if_fits) && !args.follow;
 
     Self { input, options }

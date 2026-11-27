@@ -28,18 +28,14 @@ pub struct Options {
 
 impl Default for Options {
   fn default() -> Self {
-    let wrap = WrapMode::default();
-    let tab_width = NonZeroUsize::new(8).unwrap_or(NonZeroUsize::MIN);
-    let search_settings = SearchSettings::default();
-    let ui = Ui::default();
     Self {
       initial_follow: false,
-      wrap,
+      wrap: WrapMode::default(),
       ansi: true,
-      tab_width,
+      tab_width: NonZeroUsize::new(8).unwrap_or(NonZeroUsize::MIN),
       line_numbers: false,
-      search_settings,
-      ui,
+      search_settings: SearchSettings::default(),
+      ui: Ui::default(),
       print_if_fits: false,
     }
   }
